@@ -1,0 +1,24 @@
+{
+  "version": "mock-001",
+  "updatedAt": "2026-11-07T10:00:00+07:00",
+  "stations": [
+    { "id": "ST01", "name": "Trạm Quang Trung", "lat": 20.9712, "lng": 105.7780, "depthCm": 0, "level": "none", "dataQuality": "ok", "updatedAt": "2026-11-07T10:00:00+07:00" },
+    { "id": "ST02", "name": "Trạm Nguyễn Trãi", "lat": 20.9840, "lng": 105.7945, "depthCm": 12, "level": "low", "dataQuality": "ok", "updatedAt": "2026-11-07T09:59:40+07:00" },
+    { "id": "ST03", "name": "Trạm Trần Phú", "lat": 20.9605, "lng": 105.7690, "depthCm": 35, "level": "medium", "dataQuality": "ok", "updatedAt": "2026-11-07T09:59:50+07:00" },
+    { "id": "ST04", "name": "Trạm Lê Trọng Tấn", "lat": 20.9890, "lng": 105.8200, "depthCm": 55, "level": "high", "dataQuality": "stale", "updatedAt": "2026-11-07T09:50:00+07:00" },
+    { "id": "ST05", "name": "Trạm Văn Quán", "lat": 20.9790, "lng": 105.7900, "depthCm": null, "level": "none", "dataQuality": "missing", "updatedAt": null }
+  ],
+  "restrictedZones": {
+    "type": "FeatureCollection",
+    "features": [
+      {
+        "type": "Feature",
+        "properties": { "name": "Vùng cấm: đường ngập sâu" },
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [[[105.7660, 20.9590], [105.7730, 20.9590], [105.7730, 20.9640], [105.7660, 20.9640], [105.7660, 20.9590]]]
+        }
+      }
+    ]
+  }
+}
