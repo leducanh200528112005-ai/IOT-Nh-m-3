@@ -1,0 +1,7 @@
+user station-01
+topic write flood/station-01/telemetry
+topic write flood/station-01/status
+
+user backend
+topic read flood/+/telemetry
+topic read flood/+/status
