@@ -5,11 +5,25 @@
 ```text
 IOT/
 ├── infra/       # Docker Compose, PostgreSQL, Mosquitto
-├── backend/     # Dự kiến: FastAPI
+├── backend/     # FastAPI, MQTT subscriber, migration và kiểm thử
 └── frontend/    # Dự kiến: React + TypeScript + Vite
 ```
 
-**Hiện tại chỉ có hạ tầng trong `infra/`.** Backend và frontend chưa được khởi tạo, nên chưa có lệnh chạy hai phần này.
+Hạ tầng và backend đã được khởi tạo. Frontend chưa triển khai. Backend hiện có API trạng thái/vùng ngập; phần gọi ORS sẽ được bổ sung sau.
+
+### Chạy backend
+
+Cần Python 3.12. Khởi chạy hạ tầng ở các bước dưới trước, rồi:
+
+```powershell
+cd D:\CODE\IOT\backend
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
+.\.venv\Scripts\python.exe -m alembic upgrade head
+.\.venv\Scripts\python.exe scripts\seed.py
+.\.venv\Scripts\python.exe -m uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8000
+```
+
+Mở <http://localhost:8000/docs> để thử API. Máy hiện tại đã cài môi trường, migrate và seed; những lần sau chỉ cần chạy lệnh Uvicorn sau khi mở hạ tầng. Chi tiết: [backend/README.md](backend/README.md).
 
 ## 2. Yêu cầu
 

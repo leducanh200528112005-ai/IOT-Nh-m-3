@@ -1,3 +1,7 @@
 .env
 infra/mosquitto/config/passwords
 *.dump
+.venv/
+__pycache__/
+.pytest_cache/
+*.egg-info/
