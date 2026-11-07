@@ -10,7 +10,7 @@ def test_health_and_openapi_without_database():
         assert client.get("/api/health").json() == {"status": "ok"}
         paths = client.get("/openapi.json").json()["paths"]
         assert "/api/flood-zones" in paths
-        assert "/api/routes/safe" not in paths
+        assert "/api/routes/safe" in paths
 
 
 def test_frontend_cors():

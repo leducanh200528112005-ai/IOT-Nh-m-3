@@ -44,3 +44,25 @@ class Measurement(Base):
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     water_depth_cm: Mapped[float | None] = mapped_column(Float)
     sensor_ok: Mapped[bool] = mapped_column(Boolean)
+
+
+class DemoPoint(Base):
+    __tablename__ = "demo_points"
+    __table_args__ = (
+        CheckConstraint("latitude > -90 AND latitude < 90"),
+        CheckConstraint("longitude BETWEEN -180 AND 180"),
+        CheckConstraint("water_depth_cm >= 0 AND water_depth_cm <= 10000"),
+        CheckConstraint("warning_threshold_cm >= 0 AND danger_threshold_cm > warning_threshold_cm AND danger_threshold_cm <= 10000"),
+        CheckConstraint("exclusion_radius_m > 0 AND exclusion_radius_m <= 1000"),
+    )
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(150))
+    latitude: Mapped[float] = mapped_column(Float)
+    longitude: Mapped[float] = mapped_column(Float)
+    water_depth_cm: Mapped[float] = mapped_column(Float, default=0)
+    warning_threshold_cm: Mapped[float] = mapped_column(Float, default=10)
+    danger_threshold_cm: Mapped[float] = mapped_column(Float, default=20)
+    exclusion_radius_m: Mapped[float] = mapped_column(Float, default=40)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

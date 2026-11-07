@@ -14,7 +14,7 @@ def classify(depth: float, warning: float, danger: float) -> str:
     return "warning" if depth >= warning else "normal"
 
 
-def circle(station: Station) -> dict:
+def circle(station) -> dict:
     local = CRS.from_proj4(
         f"+proj=aeqd +lat_0={station.latitude} +lon_0={station.longitude} +datum=WGS84 +units=m"
     )
@@ -50,10 +50,10 @@ def snapshot(session, stale_seconds: int) -> dict:
         retained = quality != "fresh" and last_valid is not None and last_valid.water_depth_cm > station.danger_threshold_cm
         if hazard == "danger" or retained:
             features.append({"type": "Feature", "geometry": circle(station), "properties": {
-                "station_id": station.id, "radius_m": station.exclusion_radius_m, "retained_due_to_uncertainty": retained,
+                "station_id": station.id, "radius_m": station.exclusion_radius_m, "retained_due_to_uncertainty": retained, "source": "real",
             }})
         stations.append({
-            "id": station.id, "name": station.name,
+            "id": station.id, "name": station.name, "source": "real",
             "latitude": station.latitude, "longitude": station.longitude,
             "water_depth_cm": latest.water_depth_cm if latest else None,
             "measured_at": latest.measured_at if latest else None,

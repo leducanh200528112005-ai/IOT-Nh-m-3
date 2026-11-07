@@ -1,7 +1,6 @@
 const env = import.meta.env;
 
 export const API_BASE_URL: string = (env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
-export const USE_MOCK: boolean = env.VITE_USE_MOCK === 'true';
 export const POLL_INTERVAL_MS: number = Math.min(Math.max(Number(env.VITE_POLL_INTERVAL_MS) || 4000, 3000), 5000);
 /** Quá ngưỡng này không poll thành công => coi là không còn cập nhật */
 export const STALE_AFTER_MS = POLL_INTERVAL_MS * 3;

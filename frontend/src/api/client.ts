@@ -5,15 +5,17 @@ export type ApiErrorKind = 'network' | 'timeout' | 'http' | 'parse' | 'aborted';
 export class ApiError extends Error {
   kind: ApiErrorKind;
   status?: number;
-  constructor(kind: ApiErrorKind, message: string, status?: number) {
+  code?: string;
+  constructor(kind: ApiErrorKind, message: string, status?: number, code?: string) {
     super(message);
     this.kind = kind;
     this.status = status;
+    this.code = code;
   }
 }
 
 interface Options {
-  method?: 'GET' | 'POST';
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   body?: unknown;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -29,6 +31,7 @@ export async function apiFetch<T>(path: string, opts: Options = {}): Promise<T> 
   }, opts.timeoutMs ?? 10000);
   const onAbort = () => ctrl.abort();
   opts.signal?.addEventListener('abort', onAbort);
+  if (opts.signal?.aborted) ctrl.abort();
 
   try {
     const res = await fetch(API_BASE_URL + path, {
@@ -37,8 +40,14 @@ export async function apiFetch<T>(path: string, opts: Options = {}): Promise<T> 
       body: opts.body ? JSON.stringify(opts.body) : undefined,
       signal: ctrl.signal,
     });
-    if (!res.ok) throw new ApiError('http', `Máy chủ trả lỗi ${res.status}`, res.status);
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      const message = typeof body?.error?.message === 'string' ? body.error.message : `Máy chủ trả lỗi ${res.status}`;
+      const code = typeof body?.error?.code === 'string' ? body.error.code : undefined;
+      throw new ApiError('http', message, res.status, code);
+    }
     try {
+      if (res.status === 204) return undefined as T;
       return (await res.json()) as T;
     } catch {
       throw new ApiError('parse', 'Dữ liệu trả về không đúng định dạng');

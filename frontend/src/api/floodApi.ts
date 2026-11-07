@@ -1,9 +1,7 @@
-import { USE_MOCK } from '../config';
-import type { FloodZonesResponse } from '../types';
+import type { FloodZonesResponse, SourceSelection } from '../types';
 import { apiFetch } from './client';
 
-export function fetchFloodZones(signal?: AbortSignal): Promise<FloodZonesResponse> {
-  return USE_MOCK
-    ? apiFetch<FloodZonesResponse>('/mock/flood-zones.json', { signal })
-    : apiFetch<FloodZonesResponse>('/api/flood-zones', { signal });
+export function fetchFloodZones(selection: SourceSelection, signal?: AbortSignal): Promise<FloodZonesResponse> {
+  const query = new URLSearchParams({ source: selection.source, include_real: String(selection.include_real) });
+  return apiFetch<FloodZonesResponse>(`/api/flood-zones?${query}`, { signal });
 }

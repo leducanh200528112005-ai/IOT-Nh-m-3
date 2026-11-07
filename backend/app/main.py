@@ -1,7 +1,10 @@
 import logging
+import httpx
 from contextlib import asynccontextmanager
+from typing import Literal
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import create_engine, text
@@ -9,8 +12,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 
 from app.config import Settings
-from app.flood import snapshot
+from app.demo import create_demo_router, selected_snapshot
 from app.mqtt import create_client
+from app.routing import RoutingError, find_route
+from app.schemas import RouteRequest
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -36,7 +41,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             engine.dispose()
 
     app = FastAPI(title="Flood IoT API", version="0.1.0", lifespan=lifespan)
-    app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["GET"], allow_headers=["*"])
+    app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["GET", "POST", "PATCH", "DELETE"], allow_headers=["*"])
+    app.include_router(create_demo_router(settings, sessions))
 
     @app.get("/api/health")
     def health():
@@ -57,9 +63,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         })
 
     @app.get("/api/flood-zones")
-    def flood_zones():
+    def flood_zones(source: Literal["real", "demo"] = "real", include_real: bool = False):
         with sessions() as session:
-            return snapshot(session, settings.data_stale_seconds)
+            return selected_snapshot(session, settings, source, include_real)
+
+    @app.post("/api/routes/safe")
+    def safe_route(request: RouteRequest):
+        def get_snapshot():
+            # Each read is a new transaction: do not retain an old snapshot during ORS I/O.
+            with sessions() as session:
+                return selected_snapshot(session, settings, request.source, request.include_real)
+
+        with httpx.Client(follow_redirects=False) as client:
+            return find_route(request, settings, get_snapshot, client)
+
+    @app.exception_handler(RoutingError)
+    async def routing_error(request, exc):
+        return JSONResponse(status_code=exc.status, content={"error": {"code": exc.code, "message": exc.message}})
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(request, exc):
+        return JSONResponse(status_code=422, content={"error": {
+            "code": "INVALID_INPUT", "message": "Request không hợp lệ. Kiểm tra tọa độ và các trường bắt buộc.",
+        }})
 
     @app.exception_handler(SQLAlchemyError)
     async def database_error(request, exc):

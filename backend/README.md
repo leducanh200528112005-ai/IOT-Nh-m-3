@@ -5,7 +5,7 @@
 - Hai bảng `stations`, `measurements` và migration Alembic.
 - Nhận MQTT QoS 1, kiểm tra payload/topic, chống trùng ở database.
 - API trạng thái, kiểm tra sẵn sàng và vùng cấm GeoJSON.
-- Chưa tích hợp ORS/tìm đường; không có endpoint giả trả tuyến chưa kiểm tra.
+- Tích hợp ORS với `driving-car`, tối đa hai lần gọi cho mỗi yêu cầu; không trả tuyến chưa kiểm tra.
 - Chưa có đăng nhập/phân quyền HTTP; chỉ dùng môi trường phát triển/LAN tin cậy.
 
 ## 1. Cài đặt
@@ -34,6 +34,7 @@ cd D:\CODE\IOT\backend
 - Liveness: `GET /api/health`
 - Readiness DB/schema/MQTT: `GET /api/ready`
 - Trạng thái và vùng cấm: `GET /api/flood-zones`
+- Tìm đường: `POST /api/routes/safe`
 
 Chạy **một worker** vì MQTT subscriber nằm trong ứng dụng. Khi phát triển có thể thêm `--reload`, nhưng chỉ chạy một instance dùng client ID này. Nếu cần frontend truy cập qua LAN, cấu hình host/CORS thích hợp và firewall, không công khai API ra Internet.
 
@@ -106,3 +107,136 @@ Remove-Item Env:RUN_MQTT_TESTS
 Smoke test này tạo số đo tạm thời trên trạm demo rồi xóa đúng bản ghi của nó; không chạy trên môi trường thật đang vận hành.
 
 Chỉ chạy integration test trên môi trường phát triển. Đổi schema bằng Alembic, không dùng `create_all` khi ứng dụng khởi động.
+
+## 6. OpenRouteService
+
+Thêm vào `backend/.env` (không đưa khóa thật lên Git):
+
+```dotenv
+ORS_API_KEY=your_key_here
+ORS_BASE_URL=https://api.openrouteservice.org
+ORS_TIMEOUT_SECONDS=15
+ORS_MAX_SNAP_M=50
+```
+
+Khởi động lại backend sau khi sửa cấu hình. HTTPX là dependency runtime. Profile hiện cố định `driving-car`, không phải profile dành riêng cho xe máy.
+
+### Request
+
+```http
+POST /api/routes/safe
+Content-Type: application/json
+```
+
+```json
+{
+  "start": {"longitude": 106.7001, "latitude": 10.7701},
+  "end": {"longitude": 106.7201, "latitude": 10.7901}
+}
+```
+
+Tọa độ trên chỉ minh họa. Chọn hai điểm trên đường, ngoài vùng cấm. API yêu cầu mọi trạm hoạt động đều có số đo fresh; không có trạm, thiếu đồng bộ giờ, dữ liệu lỗi/quá hạn thì từ chối. Với timeout ORS 15 giây, số đo có thể quá hạn trong lúc chờ, nên cần ESP32 hoặc nguồn mô phỏng tiếp tục gửi dữ liệu khi thử.
+
+### Response thành công
+
+- `route`: GeoJSON Feature có hình học LineString, `[longitude, latitude]`.
+- `distance_m`, `duration_s`: khoảng cách và thời gian phần tuyến trên đường.
+- `calculated_at`, `data_generated_at`: thời điểm tính và snapshot kiểm tra cuối.
+- `profile`: `driving-car`.
+- `snap_distances_m`: khoảng cách từ hai điểm chọn tới điểm đường ORS dùng.
+- `warnings`: các giới hạn cần hiển thị cho người dùng.
+
+Backend kiểm tra tuyến và đoạn nối tới hai điểm chọn không giao/chạm vùng cấm. Đoạn nối chỉ được kiểm tra hình học, không được xác nhận là đường đi được và không cộng vào distance/duration. Backend không chuyển tiếp metadata ORS hoặc khóa API.
+
+Trước khi trả kết quả, backend đọc lại trạng thái trạm. Nếu dữ liệu quá hạn thì từ chối; nếu vùng ngập mới cắt tuyến thì thử lại, tối đa hai lần gọi ORS. Lần hai thêm biên 20 m quanh vùng cấm hiện tại. Không tự giảm vùng cấm hay dùng tuyến mặc định khi thất bại.
+
+### Lỗi
+
+Envelope: `{"error": {"code": "...", "message": "..."}}`.
+
+| HTTP | Code | Ý nghĩa |
+|---|---|---|
+| 422 | `INVALID_INPUT` | Tọa độ/request sai hoặc hai điểm trùng nhau |
+| 409 | `INSUFFICIENT_DATA` | Không đủ dữ liệu mới và hợp lệ |
+| 422 | `POINT_IN_FLOOD_ZONE` | Điểm đi/đến nằm trong hoặc chạm vùng cấm |
+| 422 | `NO_SUITABLE_ROUTE` | Không có tuyến hợp lệ hoặc điểm snap quá xa |
+| 429 | `ROUTING_RATE_LIMITED` | ORS giới hạn lượt gọi |
+| 502/503 | `ROUTING_UNAVAILABLE` | Thiếu key, xác thực ORS lỗi, timeout hoặc response không hợp lệ |
+
+Không tự gọi API tìm đường theo polling. Hiện chưa có rate limit riêng cho HTTP API; chỉ dùng môi trường phát triển/LAN tin cậy, cần bổ sung trước khi public để tránh lạm dụng quota ORS. Timeout là giới hạn HTTPX theo từng pha I/O, không phải cam kết tổng thời gian xử lý.
+
+### Kiểm tra kết nối ORS thật
+
+```powershell
+.\.venv\Scripts\python.exe scripts\smoke_ors.py
+```
+
+Script dùng tọa độ ví dụ công khai tại Heidelberg, gọi ORS một lần, không ghi DB hay thay đổi trạm. Nó chỉ kiểm tra key/kết nối/định dạng response, không chứng minh kịch bản tránh ngập tại Việt Nam. Các test tự động `tests/test_routing.py` dùng mock, không tiêu tốn quota.
+
+## 7. Điểm demo và kết hợp dữ liệu thật
+
+Bảng `demo_points` tách biệt hoàn toàn `stations` và `measurements`. Cập nhật schema trước khi dùng:
+
+```powershell
+.\.venv\Scripts\python.exe -m alembic upgrade head
+```
+
+Bật chức năng trong `backend/.env`, rồi khởi động lại backend:
+
+```dotenv
+DEMO_ENABLED=true
+```
+
+Mặc định code là `false`. Khi tắt, API quản lý và yêu cầu lấy nguồn demo trả `403 DEMO_DISABLED`. Hiện API demo chưa có xác thực, chỉ bật ở môi trường local/LAN tin cậy; đây không phải cơ chế phân quyền cho môi trường công khai. Máy phát triển hiện tại đã được bật demo.
+
+### Quản lý điểm
+
+| Endpoint | Chức năng |
+|---|---|
+| `GET /api/demo-points` | Liệt kê cả điểm bật và tắt |
+| `POST /api/demo-points` | Tạo điểm, trả 201 |
+| `PATCH /api/demo-points/{id}` | Chỉnh một hoặc nhiều trường |
+| `DELETE /api/demo-points/{id}` | Xóa điểm, trả 204 |
+
+Ví dụ tạo:
+
+```json
+{
+  "name": "Điểm ngập mô phỏng",
+  "latitude": 20.9826,
+  "longitude": 105.7704,
+  "water_depth_cm": 25,
+  "warning_threshold_cm": 10,
+  "danger_threshold_cm": 20,
+  "exclusion_radius_m": 40,
+  "is_active": true
+}
+```
+
+Ngưỡng đỏ phải lớn hơn ngưỡng vàng; độ sâu 0–10000 cm; bán kính lớn hơn 0 và tối đa 1000 m. PATCH không nhận null. Điểm không tồn tại trả `404 DEMO_POINT_NOT_FOUND`.
+
+### Chọn nguồn cho bản đồ và định tuyến
+
+- Thực tế (mặc định): `GET /api/flood-zones`.
+- Chỉ demo: `GET /api/flood-zones?source=demo`.
+- Demo kết hợp thật: `GET /api/flood-zones?source=demo&include_real=true`.
+
+`POST /api/routes/safe` nhận thêm `source` và `include_real` với cùng ý nghĩa:
+
+```json
+{
+  "source": "demo",
+  "include_real": true,
+  "start": {"longitude": 105.765, "latitude": 20.98},
+  "end": {"longitude": 105.78, "latitude": 20.99}
+}
+```
+
+- `source=real` không cho phép `include_real=true` (422).
+- Điểm demo bật luôn `fresh`, không cần MQTT, không tự quá hạn và không giả mạo timestamp đo. Mức ngập vẫn do backend tính từ độ sâu/ngưỡng.
+- Điểm demo tắt không tham gia snapshot hoặc định tuyến. Nếu không có điểm hoạt động nào, dữ liệu không đủ để định tuyến.
+- Khi kết hợp, trạm thật vẫn kiểm tra cảm biến/độ mới như cũ; chỉ một trạm thật không fresh cũng có thể chặn định tuyến. Không bật kết hợp nếu muốn demo độc lập phần cứng.
+- Cả hai nguồn cùng áp dụng chặn điểm đi/đến trong vùng cấm, kiểm tra tuyến giao vùng cấm và đọc lại snapshot sau ORS.
+- Snapshot trả `source`, `include_real`, nguồn từng station/feature. Response tuyến có cùng nhãn nguồn và cảnh báo mô phỏng. Tuyến được ORS tính thật, không phải tuyến giả.
+
+Giao diện quản lý riêng tại `http://localhost:5173/demo`. Trang bản đồ có lựa chọn nguồn và checkbox **Bao gồm trạm thực tế**; đổi nguồn sẽ hủy yêu cầu đang chạy và xóa tuyến/điểm chọn cũ để không trộn kết quả.

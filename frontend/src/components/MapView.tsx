@@ -1,13 +1,13 @@
-import { useEffect } from 'react';
-import { CircleMarker, GeoJSON, MapContainer, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
-import type { LatLngTuple } from 'leaflet';
+import { useEffect, useRef } from 'react';
+import { CircleMarker, GeoJSON, MapContainer, Marker, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
+import { divIcon, type LatLngTuple, type Marker as LeafletMarker } from 'leaflet';
 import type { FeatureCollection } from 'geojson';
 import { MAP_CENTER, MAP_ZOOM, TILE_ATTRIBUTION, TILE_URL } from '../config';
 import type { LatLng, Station } from '../types';
 import { formatTime } from '../utils/format';
 import { LEVEL_INFO, QUALITY_LABEL, displayLevel } from '../utils/status';
 
-export type PickMode = 'origin' | 'destination' | null;
+export type PickMode = 'origin' | 'destination' | 'demo' | null;
 
 interface Props {
   stations: Station[];
@@ -21,6 +21,7 @@ interface Props {
   selectedId: string | null;
   onPick: (p: LatLng) => void;
   onSelectStation: (id: string) => void;
+  onMoveDemo?: (id: string, position: LatLng) => void;
 }
 
 function ClickPicker({ enabled, onPick }: { enabled: boolean; onPick: (p: LatLng) => void }) {
@@ -36,12 +37,24 @@ function FitRoute({ path }: { path: LatLngTuple[] | null }) {
   return null;
 }
 
+function FitStations({ stations }: { stations: Station[] }) {
+  const map = useMap();
+  const fitted = useRef(false);
+  useEffect(() => {
+    if (fitted.current || stations.length === 0) return;
+    map.fitBounds(stations.map((s): LatLngTuple => [s.latitude, s.longitude]), { padding: [40, 40], maxZoom: 15 });
+    fitted.current = true;
+  }, [stations, map]);
+  return null;
+}
+
 export default function MapView(p: Props) {
   return (
     <MapContainer center={MAP_CENTER} zoom={MAP_ZOOM} className={`map${p.pickMode ? ' picking' : ''}`}>
       <TileLayer url={TILE_URL} attribution={TILE_ATTRIBUTION} maxZoom={19} />
       <ClickPicker enabled={p.pickMode !== null} onPick={p.onPick} />
       <FitRoute path={p.routePath} />
+      <FitStations stations={p.stations} />
 
       {p.zones && (
         <GeoJSON
@@ -66,28 +79,39 @@ export default function MapView(p: Props) {
       {p.stations.map((s) => {
         const lv = displayLevel(s);
         const selected = s.id === p.selectedId;
+        if (s.source === 'demo') {
+          return <Marker key={s.id} position={[s.latitude, s.longitude]}
+            icon={divIcon({ className: 'demo-map-marker', html: `<span style="background:${LEVEL_INFO[lv].color}">D</span>`, iconSize: [24, 24], iconAnchor: [12, 12] })}
+            draggable={!!p.onMoveDemo}
+            eventHandlers={{ click: () => p.onSelectStation(s.id), dragend: (event) => {
+              const location = (event.target as LeafletMarker).getLatLng();
+              p.onMoveDemo?.(s.id, { lat: location.lat, lng: location.lng });
+            } }}>
+            <Tooltip><strong>{s.name}</strong><br />MÔ PHỎNG · {LEVEL_INFO[lv].label} · {s.water_depth_cm} cm</Tooltip>
+          </Marker>;
+        }
         return (
           <CircleMarker
             key={s.id}
-            center={[s.lat, s.lng]}
+            center={[s.latitude, s.longitude]}
             radius={selected ? 12 : 9}
             eventHandlers={{ click: () => p.onSelectStation(s.id) }}
             pathOptions={{
               fillColor: LEVEL_INFO[lv].color,
-              fillOpacity: s.dataQuality === 'ok' ? 0.95 : 0.55,
+              fillOpacity: s.data_quality === 'fresh' ? 0.95 : 0.55,
               color: selected ? '#12263a' : '#ffffff',
               weight: selected ? 3 : 2,
               // Dữ liệu cũ/mất: viền đứt nét để phân biệt với mức ngập
-              dashArray: s.dataQuality === 'ok' ? undefined : '3 3',
+              dashArray: s.data_quality === 'fresh' ? undefined : '3 3',
             }}
           >
             <Tooltip>
-              <strong>{s.name}</strong>
+              <strong>{s.name}</strong> · Thực tế
               <br />
               {LEVEL_INFO[lv].label}
-              {s.depthCm != null && s.dataQuality !== 'missing' ? `, ${s.depthCm} cm` : ''}
+              {s.water_depth_cm != null && s.data_quality !== 'missing' ? `, ${s.water_depth_cm} cm` : ''}
               <br />
-              {QUALITY_LABEL[s.dataQuality]} · {formatTime(s.updatedAt)}
+              {QUALITY_LABEL[s.data_quality]} · {formatTime(s.measured_at ?? s.received_at)}
             </Tooltip>
           </CircleMarker>
         );

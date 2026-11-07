@@ -57,7 +57,7 @@ export default function RoutePanel(p: Props) {
 
       {p.state.status === 'no_route' && (
         <p className="msg warn" role="alert">
-          {r?.message || 'Không có tuyến phù hợp giữa hai điểm này với tình hình ngập hiện tại.'} Hãy thử đổi điểm đi/đến hoặc chờ dữ liệu cập nhật.
+          {p.state.message || 'Không có tuyến phù hợp giữa hai điểm này với tình hình ngập hiện tại.'} Hãy thử đổi điểm đi/đến hoặc chờ dữ liệu cập nhật.
         </p>
       )}
 
@@ -69,10 +69,11 @@ export default function RoutePanel(p: Props) {
             </p>
           )}
           <dl>
-            <div><dt>Khoảng cách</dt><dd>{formatDistance(r.distanceM)}</dd></div>
-            <div><dt>Thời gian</dt><dd>{formatDuration(r.durationS)}</dd></div>
+            <div><dt>Khoảng cách</dt><dd>{formatDistance(r.distance_m)}</dd></div>
+            <div><dt>Thời gian</dt><dd>{formatDuration(r.duration_s)}</dd></div>
           </dl>
-          <p className="sub">Tính lúc {formatTime(r.computedAt)}</p>
+          <p className="sub">Tính lúc {formatTime(r.calculated_at)}</p>
+          {r.warnings.map((warning) => <p className="msg warn" key={warning}>{warning}</p>)}
         </div>
       )}
 

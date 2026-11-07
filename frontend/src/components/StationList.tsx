@@ -16,18 +16,18 @@ export default function StationList({ stations, selectedId, onSelect }: Props) {
       <ul className="stations">
         {stations.map((s) => {
           const lv = displayLevel(s);
-          const missing = s.dataQuality === 'missing';
+          const missing = s.data_quality === 'missing';
           return (
             <li key={s.id}>
               <button className={s.id === selectedId ? 'station selected' : 'station'} onClick={() => onSelect(s.id)}>
                 <span className="dot" style={{ background: LEVEL_INFO[lv].color }} />
                 <span className="st-main">
-                  <strong>{s.name}</strong>
+                   <strong>{s.name} · {s.source === 'demo' ? 'Mô phỏng' : 'Thực tế'}</strong>
                   <span>
-                    {LEVEL_INFO[lv].label} · {missing || s.depthCm == null ? 'Chưa có độ sâu' : `${s.depthCm} cm`}
+                    {LEVEL_INFO[lv].label} · {missing || s.water_depth_cm == null ? 'Chưa có độ sâu' : `${s.water_depth_cm} cm`}
                   </span>
-                  <span className={s.dataQuality === 'ok' ? 'q ok' : 'q bad'}>
-                    {QUALITY_LABEL[s.dataQuality]} · {formatTime(s.updatedAt)}
+                  <span className={s.data_quality === 'fresh' ? 'q ok' : 'q bad'}>
+                     {s.source === 'demo' ? 'Giá trị cấu hình — không tự quá hạn' : `${QUALITY_LABEL[s.data_quality]} · ${formatTime(s.measured_at ?? s.received_at)}`}
                   </span>
                 </span>
               </button>

@@ -6,10 +6,10 @@
 IOT/
 ├── infra/       # Docker Compose, PostgreSQL, Mosquitto
 ├── backend/     # FastAPI, MQTT subscriber, migration và kiểm thử
-└── frontend/    # Dự kiến: React + TypeScript + Vite
+└── frontend/    # React + TypeScript + Vite, bản đồ và giao diện demo
 ```
 
-Hạ tầng và backend đã được khởi tạo. Frontend chưa triển khai. Backend hiện có API trạng thái/vùng ngập; phần gọi ORS sẽ được bổ sung sau.
+Hạ tầng, backend và frontend đã được khởi tạo. Backend có API trạng thái/vùng ngập và tìm đường tránh vùng cấm qua OpenRouteService.
 
 ### Chạy backend
 
@@ -24,6 +24,28 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1
 ```
 
 Mở <http://localhost:8000/docs> để thử API. Máy hiện tại đã cài môi trường, migrate và seed; những lần sau chỉ cần chạy lệnh Uvicorn sau khi mở hạ tầng. Chi tiết: [backend/README.md](backend/README.md).
+
+Để tìm đường, cấu hình `ORS_API_KEY` trong `backend/.env`, khởi động lại backend và gọi `POST /api/routes/safe` qua Swagger. Trạm phải tiếp tục gửi số đo mới; dữ liệu quá hạn sẽ bị từ chối. Không đặt khóa ORS trong frontend.
+
+### Chạy frontend và demo
+
+Mở terminal riêng:
+
+```powershell
+cd D:\CODE\IOT\frontend
+npm install
+npm run dev
+```
+
+- Bản đồ/tìm đường: <http://localhost:5173/>.
+- Tạo và quản lý điểm demo: <http://localhost:5173/demo>.
+- Để dùng demo, đặt `DEMO_ENABLED=true` trong `backend/.env`, chạy migration mới nhất rồi khởi động lại backend. Máy hiện tại đã migrate và bật demo.
+- Trang `/demo` cho phép tạo/sửa/xóa/bật/tắt điểm, chỉnh độ ngập/ngưỡng/bán kính và chọn vị trí trên bản đồ hoặc kéo marker D.
+- Trang bản đồ có nguồn **Thực tế / Demo**. Trong Demo, bật **Bao gồm trạm thực tế** nếu muốn kết hợp hai nguồn.
+- Điểm demo luôn hợp lệ, không cần MQTT và không tự quá hạn. Trạm thật khi được lấy thêm vẫn phải có số đo mới/hợp lệ. Không có điểm hoạt động nào thì không đủ dữ liệu định tuyến.
+- API quản lý demo chưa có đăng nhập: chỉ bật ở local/LAN tin cậy, không công khai ra Internet.
+
+Xem chi tiết tại [frontend/README.md](frontend/README.md) và [backend/README.md](backend/README.md).
 
 ## 2. Yêu cầu
 

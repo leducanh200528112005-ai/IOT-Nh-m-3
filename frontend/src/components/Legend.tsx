@@ -17,7 +17,7 @@ export default function Legend() {
       <ul className="legend">
         <li><span className="dot solid" style={{ background: '#2f9e6e' }} />Viền liền: dữ liệu mới</li>
         <li><span className="dot dashed" style={{ background: '#e3b505' }} />Viền đứt, mờ: dữ liệu cũ</li>
-        <li><span className="dot dashed" style={{ background: '#8a949e' }} />Xám: mất dữ liệu, không rõ mức ngập</li>
+        <li><span className="dot dashed" style={{ background: '#8a949e' }} />Xám: dữ liệu cũ, lỗi hoặc thiếu; không rõ mức ngập</li>
         <li><span className="zone" />Vùng cấm đi qua</li>
       </ul>
     </section>

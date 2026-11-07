@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     mqtt_client_id: str = "flood-backend"
     data_stale_seconds: int = Field(default=15, gt=0)
     cors_origins: list[str] = ["http://localhost:5173"]
+    ors_api_key: SecretStr = SecretStr("")
+    ors_base_url: str = "https://api.openrouteservice.org"
+    ors_timeout_seconds: float = Field(default=15, gt=0, le=60)
+    ors_max_snap_m: float = Field(default=50, gt=0, le=500)
+    demo_enabled: bool = False
 
     @property
     def database_url(self) -> URL:

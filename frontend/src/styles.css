@@ -68,6 +68,13 @@ button:focus-visible { outline: 3px solid #5aa9c4; outline-offset: 2px; }
 .dot.dashed { border: 2px dashed #5b6b7a; box-shadow: none; opacity: 0.7; }
 .zone { width: 14px; height: 14px; border: 2px dashed #8e1b16; background: rgba(200, 49, 43, 0.28); flex: none; }
 
+select, input { font: inherit; }
+select { margin-left: 8px; padding: 5px; max-width: 100%; }
+.demo-form fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.demo-form label { display: block; margin: 8px 0; }
+.demo-form input:not([type="checkbox"]) { display: block; width: 100%; padding: 7px; border: 1px solid var(--line); border-radius: 5px; }
+.demo-map-marker span { display: block; width: 24px; height: 24px; border: 2px solid white; border-radius: 4px; box-shadow: 0 0 0 1px #12263a; color: white; text-align: center; font-weight: bold; line-height: 20px; }
+
 @media (max-width: 800px) {
   .app { flex-direction: column-reverse; }
   .map-wrap { flex: none; height: 52vh; }
