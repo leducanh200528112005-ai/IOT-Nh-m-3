@@ -73,3 +73,24 @@ export interface DemoPoint extends DemoPointInput {
   created_at: string;
   updated_at: string;
 }
+
+/** Trạm thật. `id` là device_id trong payload MQTT, không đổi được sau khi tạo. */
+export interface StationInput {
+  name: string;
+  latitude: number;
+  longitude: number;
+  warning_threshold_cm: number;
+  danger_threshold_cm: number;
+  exclusion_radius_m: number;
+  is_active: boolean;
+}
+
+export interface StationCreateInput extends StationInput {
+  id: string;
+}
+
+export interface StationConfig extends StationInput {
+  id: string;
+  created_at: string;
+  updated_at: string;
+}

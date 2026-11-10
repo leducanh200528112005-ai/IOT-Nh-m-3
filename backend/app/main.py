@@ -16,6 +16,7 @@ from app.demo import create_demo_router, selected_snapshot
 from app.mqtt import create_client
 from app.routing import RoutingError, find_route
 from app.schemas import RouteRequest
+from app.stations import create_station_router
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -43,6 +44,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="Flood IoT API", version="0.1.0", lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["GET", "POST", "PATCH", "DELETE"], allow_headers=["*"])
     app.include_router(create_demo_router(settings, sessions))
+    app.include_router(create_station_router(settings, sessions))
 
     @app.get("/api/health")
     def health():

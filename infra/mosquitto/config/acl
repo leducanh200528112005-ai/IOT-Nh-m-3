@@ -1,6 +1,9 @@
-user station-01
-topic write flood/station-01/telemetry
-topic write flood/station-01/status
+# Shared device account: every station uses the same MQTT user and password.
+# A leaked credential can publish fake telemetry for any station id.
+# Acceptable for coursework/LAN demo only; use one account per station in production.
+user station
+topic write flood/+/telemetry
+topic write flood/+/status
 
 user backend
 topic read flood/+/telemetry

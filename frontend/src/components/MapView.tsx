@@ -22,6 +22,8 @@ interface Props {
   onPick: (p: LatLng) => void;
   onSelectStation: (id: string) => void;
   onMoveDemo?: (id: string, position: LatLng) => void;
+  /** Cho phép kéo marker trạm thật (trang cấu hình trạm). */
+  onMoveStation?: (id: string, position: LatLng) => void;
 }
 
 function ClickPicker({ enabled, onPick }: { enabled: boolean; onPick: (p: LatLng) => void }) {
@@ -90,29 +92,42 @@ export default function MapView(p: Props) {
             <Tooltip><strong>{s.name}</strong><br />MÔ PHỎNG · {LEVEL_INFO[lv].label} · {s.water_depth_cm} cm</Tooltip>
           </Marker>;
         }
+        const tooltip = <>
+          <strong>{s.name}</strong> · Thực tế
+          <br />
+          {LEVEL_INFO[lv].label}
+          {s.water_depth_cm != null && s.data_quality !== 'missing' ? `, ${s.water_depth_cm} cm` : ''}
+          <br />
+          {QUALITY_LABEL[s.data_quality]} · {formatTime(s.measured_at ?? s.received_at)}
+        </>;
+        const style = {
+          fillColor: LEVEL_INFO[lv].color,
+          fillOpacity: s.data_quality === 'fresh' ? 0.95 : 0.55,
+          color: selected ? '#12263a' : '#ffffff',
+          weight: selected ? 3 : 2,
+          // Dữ liệu cũ/mất: viền đứt nét để phân biệt với mức ngập
+          dashArray: s.data_quality === 'fresh' ? undefined : '3 3',
+        };
+        // Leaflet chỉ cho kéo Marker, không kéo được CircleMarker.
+        if (p.onMoveStation) {
+          return <Marker key={s.id} position={[s.latitude, s.longitude]} draggable
+            icon={divIcon({ className: 'demo-map-marker', html: `<span style="background:${LEVEL_INFO[lv].color}">T</span>`, iconSize: [24, 24], iconAnchor: [12, 12] })}
+            eventHandlers={{ click: () => p.onSelectStation(s.id), dragend: (event) => {
+              const location = (event.target as LeafletMarker).getLatLng();
+              p.onMoveStation?.(s.id, { lat: location.lat, lng: location.lng });
+            } }}>
+            <Tooltip>{tooltip}</Tooltip>
+          </Marker>;
+        }
         return (
           <CircleMarker
             key={s.id}
             center={[s.latitude, s.longitude]}
             radius={selected ? 12 : 9}
             eventHandlers={{ click: () => p.onSelectStation(s.id) }}
-            pathOptions={{
-              fillColor: LEVEL_INFO[lv].color,
-              fillOpacity: s.data_quality === 'fresh' ? 0.95 : 0.55,
-              color: selected ? '#12263a' : '#ffffff',
-              weight: selected ? 3 : 2,
-              // Dữ liệu cũ/mất: viền đứt nét để phân biệt với mức ngập
-              dashArray: s.data_quality === 'fresh' ? undefined : '3 3',
-            }}
+            pathOptions={style}
           >
-            <Tooltip>
-              <strong>{s.name}</strong> · Thực tế
-              <br />
-              {LEVEL_INFO[lv].label}
-              {s.water_depth_cm != null && s.data_quality !== 'missing' ? `, ${s.water_depth_cm} cm` : ''}
-              <br />
-              {QUALITY_LABEL[s.data_quality]} · {formatTime(s.measured_at ?? s.received_at)}
-            </Tooltip>
+            <Tooltip>{tooltip}</Tooltip>
           </CircleMarker>
         );
       })}

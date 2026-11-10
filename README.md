@@ -39,8 +39,10 @@ npm run dev
 
 - Bản đồ/tìm đường: <http://localhost:5173/>.
 - Tạo và quản lý điểm demo: <http://localhost:5173/demo>.
+- Cấu hình trạm thật: <http://localhost:5173/stations>.
 - Để dùng demo, đặt `DEMO_ENABLED=true` trong `backend/.env`, chạy migration mới nhất rồi khởi động lại backend. Máy hiện tại đã migrate và bật demo.
 - Trang `/demo` cho phép tạo/sửa/xóa/bật/tắt điểm, chỉnh độ ngập/ngưỡng/bán kính và chọn vị trí trên bản đồ hoặc kéo marker D.
+- Trang `/stations` cấu hình trạm thật: mã trạm (device_id), tên, vị trí, ngưỡng và bán kính. Cần `STATIONS_ENABLED=true`. Mã trạm không đổi được sau khi tạo; trạm đã có số đo không xóa được (dùng tắt trạm).
 - Trang bản đồ có nguồn **Thực tế / Demo**. Trong Demo, bật **Bao gồm trạm thực tế** nếu muốn kết hợp hai nguồn.
 - Điểm demo luôn hợp lệ, không cần MQTT và không tự quá hạn. Trạm thật khi được lấy thêm vẫn phải có số đo mới/hợp lệ. Không có điểm hoạt động nào thì không đủ dữ liệu định tuyến.
 - API quản lý demo chưa có đăng nhập: chỉ bật ở local/LAN tin cậy, không công khai ra Internet.
@@ -137,11 +139,13 @@ docker compose exec postgres psql -U flood_admin -d flood_monitor -c "SELECT cur
 | Client | Host | Port | Username | Password trong `infra/.env` |
 |---|---|---|---|---|
 | Backend chạy trực tiếp trên laptop | `localhost` | `1883` | `backend` | `MQTT_BACKEND_PASSWORD` |
-| ESP32 cùng mạng Wi-Fi | IP LAN của laptop | `1883` | `station-01` | `MQTT_STATION_PASSWORD` |
+| ESP32 cùng mạng Wi-Fi | IP LAN của laptop | `1883` | `station` | `MQTT_DEVICE_PASSWORD` |
 
 - Image: `eclipse-mosquitto:2.0.22`.
-- ESP32 gửi QoS 1 tới `flood/station-01/telemetry` và `flood/station-01/status`.
+- **Mọi trạm dùng chung một tài khoản MQTT `station`** (mật khẩu `MQTT_DEVICE_PASSWORD`). Thêm trạm chỉ cần tạo trên web + nạp `device_id` vào firmware.
+- ESP32 gửi QoS 1 tới `flood/<device_id>/telemetry` và `flood/<device_id>/status`, ví dụ `flood/station-01/telemetry`.
 - Backend subscribe QoS 1 tới `flood/+/telemetry` và `flood/+/status`.
+- Đánh đổi: một thiết bị bị lộ mật khẩu có thể gửi số đo giả cho **mọi** trạm. Chỉ chấp nhận cho đồ án/LAN tin cậy; triển khai thật phải dùng một tài khoản riêng cho từng trạm.
 - ESP32 **không dùng `localhost`**. Chạy `ipconfig` để tìm IPv4 của Wi-Fi laptop.
 - Nếu ESP32 không kết nối được, kiểm tra cùng mạng Wi-Fi, client isolation và quyền TCP `1883` trên Windows Firewall (profile Private, phạm vi Local subnet).
 - MQTT chưa có TLS, chỉ dùng trong LAN tin cậy; không mở cổng ra Internet.

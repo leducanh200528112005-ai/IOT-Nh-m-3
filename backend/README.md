@@ -44,11 +44,11 @@ Trong terminal khác, tại `backend`:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\simulate.py --depth 23
-.\.venv\Scripts\python.exe scripts\simulate.py --depth 15
+.\.venv\Scripts\python.exe scripts\simulate.py --device-id station-02 --depth 15
 .\.venv\Scripts\python.exe scripts\simulate.py --invalid
 ```
 
-Script dùng tài khoản station-01 từ `infra/.env`, chỉ để phát triển local. Các lệnh này tạo lịch sử số đo thật cho trạm thử nghiệm, không tự xóa sau chạy.
+Script dùng tài khoản `station` dùng chung từ `infra/.env`, chỉ để phát triển local. `--device-id` chọn trạm (mặc định `station-01`); trạm phải có trong bảng `stations`. Các lệnh này tạo lịch sử số đo thật cho trạm thử nghiệm, không tự xóa sau chạy.
 
 Backend đọc topic `flood/+/telemetry`. Status online/offline chưa được lưu; độ mới số đo là nguồn xác định dữ liệu còn dùng được. MQTT chỉ báo kết nối trong readiness, chưa xác nhận SUBACK.
 
@@ -240,3 +240,45 @@ Ngưỡng đỏ phải lớn hơn ngưỡng vàng; độ sâu 0–10000 cm; bán
 - Snapshot trả `source`, `include_real`, nguồn từng station/feature. Response tuyến có cùng nhãn nguồn và cảnh báo mô phỏng. Tuyến được ORS tính thật, không phải tuyến giả.
 
 Giao diện quản lý riêng tại `http://localhost:5173/demo`. Trang bản đồ có lựa chọn nguồn và checkbox **Bao gồm trạm thực tế**; đổi nguồn sẽ hủy yêu cầu đang chạy và xóa tuyến/điểm chọn cũ để không trộn kết quả.
+
+## 8. Cấu hình trạm thật
+
+Bảng `stations` đã có từ migration `0001`, không cần migration mới. Bật chức năng trong `backend/.env`, rồi khởi động lại backend:
+
+```dotenv
+STATIONS_ENABLED=true
+```
+
+Mặc định là `false`. Khi tắt, mọi endpoint `/api/stations` trả `403 STATIONS_DISABLED`. Tách riêng khỏi `DEMO_ENABLED` để có thể bật demo trên máy dev mà không cho ai sửa trạm đang chạy thật.
+
+| Endpoint | Chức năng |
+|---|---|
+| `GET /api/stations` | Liệt kê cả trạm bật và tắt |
+| `POST /api/stations` | Tạo trạm, trả 201 |
+| `PATCH /api/stations/{id}` | Chỉnh một hoặc nhiều trường |
+| `DELETE /api/stations/{id}` | Xóa trạm, trả 204 |
+
+Ví dụ tạo:
+
+```json
+{
+  "id": "station-02",
+  "name": "Ngã tư Hàng Xanh",
+  "latitude": 10.8012,
+  "longitude": 106.7108,
+  "warning_threshold_cm": 10,
+  "danger_threshold_cm": 20,
+  "exclusion_radius_m": 40,
+  "is_active": true
+}
+```
+
+- `id` là `device_id` trong topic `flood/<id>/telemetry`; chỉ gồm chữ, số, `_`, `-`. **Không sửa được sau khi tạo** vì gắn với lịch sử số đo và firmware.
+- Tạo trùng mã trả `409 STATION_EXISTS`.
+- Xóa trạm đã có số đo trả `409 STATION_HAS_MEASUREMENTS`; dùng `is_active=false` để giữ lịch sử.
+- Trạm không tồn tại trả `404 STATION_NOT_FOUND`; ngưỡng sai trả `422 INVALID_INPUT`.
+- API này chưa có đăng nhập và sửa được trạm thật: chỉ bật ở local/LAN tin cậy.
+
+Giao diện tại `http://localhost:5173/stations`: chọn vị trí trên bản đồ hoặc kéo marker **T**, và xem trạng thái `fresh/stale/invalid/missing` cùng độ ngập hiện tại của từng trạm ngay trong danh sách.
+
+Sau khi tạo trạm trên web, nạp cùng `device_id` vào firmware ESP32. Broker dùng chung tài khoản `station` với ACL `flood/+/telemetry`, nên không cần sửa gì thêm trong Mosquitto.

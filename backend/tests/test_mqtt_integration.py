@@ -39,7 +39,7 @@ def test_real_mqtt_to_database_to_http():
             while True:
                 single("flood/station-01/telemetry", message, qos=1,
                        hostname=settings.mqtt_host, port=settings.mqtt_port,
-                       auth={"username": "station-01", "password": infra["MQTT_STATION_PASSWORD"]})
+                       auth={"username": "station", "password": infra["MQTT_DEVICE_PASSWORD"]})
                 with Session(engine) as session:
                     found = session.scalar(select(Measurement.id).where(Measurement.boot_id == boot_id))
                 if found:

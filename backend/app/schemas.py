@@ -98,3 +98,54 @@ class DemoPointResponse(DemoPointCreate):
     id: str
     created_at: datetime
     updated_at: datetime
+
+
+class StationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False, str_strip_whitespace=True)
+    # Must match the device_id the firmware publishes on flood/<id>/telemetry.
+    id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str = Field(min_length=1, max_length=150)
+    latitude: float = Field(gt=-90, lt=90)
+    longitude: float = Field(ge=-180, le=180)
+    warning_threshold_cm: float = Field(default=10, ge=0, le=10000)
+    danger_threshold_cm: float = Field(default=20, gt=0, le=10000)
+    exclusion_radius_m: float = Field(default=40, gt=0, le=1000)
+    is_active: bool = Field(default=True, strict=True)
+
+    @model_validator(mode="after")
+    def validate_thresholds(self):
+        if self.danger_threshold_cm <= self.warning_threshold_cm:
+            raise ValueError("Danger threshold must exceed warning threshold")
+        return self
+
+
+class StationPatch(BaseModel):
+    """The station id is the MQTT device_id and cannot change after creation."""
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False, str_strip_whitespace=True)
+    name: str | None = Field(default=None, min_length=1, max_length=150)
+    latitude: float | None = Field(default=None, gt=-90, lt=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    warning_threshold_cm: float | None = Field(default=None, ge=0, le=10000)
+    danger_threshold_cm: float | None = Field(default=None, gt=0, le=10000)
+    exclusion_radius_m: float | None = Field(default=None, gt=0, le=1000)
+    is_active: bool | None = Field(default=None, strict=True)
+
+    @model_validator(mode="after")
+    def reject_nulls(self):
+        if any(getattr(self, field) is None for field in self.model_fields_set):
+            raise ValueError("Explicit null is not supported")
+        return self
+
+
+class StationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    name: str
+    latitude: float
+    longitude: float
+    warning_threshold_cm: float
+    danger_threshold_cm: float
+    exclusion_radius_m: float
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime

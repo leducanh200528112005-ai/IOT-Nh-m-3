@@ -34,3 +34,13 @@ Mặc định dùng tile OSM; cần giữ attribution và tuân thủ chính sá
 - Backend cần migration mới nhất và `DEMO_ENABLED=true` trong `backend/.env`, sau đó khởi động lại.
 - Đổi nguồn sẽ hủy/xóa tuyến cũ. Bản đồ và request định tuyến dùng cùng lựa chọn nguồn.
 - API chỉnh sửa demo chưa có đăng nhập, chỉ sử dụng local/LAN tin cậy.
+
+# Cấu hình trạm thật
+
+- Mở `/stations` để tạo/sửa/tắt/xóa trạm thật. Cần `STATIONS_ENABLED=true` trong `backend/.env`.
+- **Mã trạm** là `device_id` mà ESP32 gửi trong topic `flood/<mã>/telemetry`. Phải khớp chính xác; không sửa được sau khi tạo.
+- Chọn vị trí bằng click bản đồ hoặc kéo marker **T**.
+- Danh sách trạm hiển thị trạng thái dữ liệu live (`Dữ liệu mới / cũ / lỗi cảm biến / mất dữ liệu`) và độ ngập hiện tại.
+- Trạm đã có số đo không xóa được (lỗi 409); dùng **Trạm đang hoạt động** để tắt thay vì xóa, giữ nguyên lịch sử.
+- Sau khi tạo trạm, nạp cùng `device_id` vào firmware ESP32. Mosquitto dùng chung tài khoản `station`, không cần sửa ACL.
+- API này chưa có đăng nhập và sửa được trạm thật: chỉ dùng local/LAN tin cậy.

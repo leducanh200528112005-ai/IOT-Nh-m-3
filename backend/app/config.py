@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     ors_timeout_seconds: float = Field(default=15, gt=0, le=60)
     ors_max_snap_m: float = Field(default=50, gt=0, le=500)
     demo_enabled: bool = False
+    stations_enabled: bool = False
 
     @property
     def database_url(self) -> URL:

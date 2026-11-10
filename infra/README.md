@@ -12,7 +12,7 @@ docker compose ps
 docker compose logs --tail=100 postgres mosquitto
 ```
 
-`setup.ps1` tao `.env` voi mat khau ngau nhien va file hash MQTT `mosquitto/config/passwords`. Chay lai script khong ghi de cac file nay. Runtime mount cau hinh MQTT read-only; helper tao tai khoan moi duoc mount read/write.
+`setup.ps1` tao `.env` voi mat khau ngau nhien va file hash MQTT `mosquitto/config/passwords`. Chay lai script khong ghi de cac file nay. File `.env` cu dung `MQTT_STATION_PASSWORD` duoc tu doi ten thanh `MQTT_DEVICE_PASSWORD`, giu nguyen mat khau. Runtime mount cau hinh MQTT read-only; helper tao tai khoan moi duoc mount read/write.
 
 Khong dua `.env` va `mosquitto/config/passwords` len Git. Mat khau MQTT trong `.env` dung de cau hinh thiet bi/backend, khong duoc tu dong nap vao broker: broker doc file hash `passwords`.
 
@@ -46,11 +46,13 @@ docker compose exec postgres psql -U flood_admin -d flood_monitor -c "SELECT ver
 | Client | Host | Port | Username | Password |
 |---|---|---|---|---|
 | FastAPI chay tren laptop | `localhost` | 1883 | `backend` | `MQTT_BACKEND_PASSWORD` trong `.env` |
-| ESP32 | IPv4 Wi-Fi cua laptop | 1883 | `station-01` | `MQTT_STATION_PASSWORD` trong `.env` |
+| ESP32 | IPv4 Wi-Fi cua laptop | 1883 | `station` | `MQTT_DEVICE_PASSWORD` trong `.env` |
 
 - ESP32 khong dung `localhost`. Dung `ipconfig` de tim IP laptop.
 - ESP32 publish QoS 1, backend subscribe QoS 1.
-- Thiet bi chi duoc publish `flood/station-01/telemetry` va `flood/station-01/status`.
+- Moi tram dung chung mot tai khoan `station`. Thiet bi chi duoc publish `flood/<device_id>/telemetry` va `flood/<device_id>/status`, voi `<device_id>` la bat ky mot cap (vi du `flood/station-02/telemetry`).
+- Them tram moi chi can tao tren web (`/stations`) va nap `device_id` vao firmware; khong can sua ACL hay tao tai khoan MQTT.
+- Danh doi: mot thiet bi bi lo mat khau co the gui so do gia cho **moi** tram. Chi chap nhan cho do an/LAN tin cay; trien khai that phai dung mot tai khoan rieng cho tung tram.
 - Backend chi duoc subscribe telemetry/status cac tram.
 - Telemetry khong retain. Status nen retain, kem Last Will offline.
 - Last Will va keepalive do MQTT client cau hinh, khong phai file Compose.
@@ -71,7 +73,7 @@ docker compose exec mosquitto mosquitto_sub -h localhost -u backend -P "MAT_KHAU
 Terminal 2:
 
 ```powershell
-docker compose exec mosquitto mosquitto_pub -h localhost -u station-01 -P "MAT_KHAU_THIET_BI" -t "flood/station-01/telemetry" -q 1 -m "test-message"
+docker compose exec mosquitto mosquitto_pub -h localhost -u station -P "MAT_KHAU_THIET_BI" -t "flood/station-01/telemetry" -q 1 -m "test-message"
 ```
 
 Terminal 1 phai nhan duoc message. Day chi la thu broker, khong phai JSON telemetry hop le. Dung tai khoan thu nghiem: lenh co the luu mat khau trong lich su shell.
