@@ -40,6 +40,7 @@ npm run dev
 - Bản đồ/tìm đường: <http://localhost:5173/>.
 - Tạo và quản lý điểm demo: <http://localhost:5173/demo>.
 - Cấu hình trạm thật: <http://localhost:5173/stations>.
+- Dự báo độ sâu thử nghiệm: <http://localhost:5173/forecast>. Đọc file phát lại cục bộ từ pipeline AI; tách khỏi ESP32, cảnh báo thật và định tuyến. Xem [hướng dẫn](IOT%20training/analysis/KET_QUA_BAN_DO_DU_BAO_DO_SAU.md).
 - Để dùng demo, đặt `DEMO_ENABLED=true` trong `backend/.env`, chạy migration mới nhất rồi khởi động lại backend. Máy hiện tại đã migrate và bật demo.
 - Trang `/demo` cho phép tạo/sửa/xóa/bật/tắt điểm, chỉnh độ ngập/ngưỡng/bán kính và chọn vị trí trên bản đồ hoặc kéo marker D.
 - Trang `/stations` cấu hình trạm thật: mã trạm (device_id), tên, vị trí, ngưỡng và bán kính. Cần `STATIONS_ENABLED=true`. Mã trạm không đổi được sau khi tạo; trạm đã có số đo không xóa được (dùng tắt trạm).

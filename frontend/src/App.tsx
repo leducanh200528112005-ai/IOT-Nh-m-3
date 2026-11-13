@@ -6,6 +6,7 @@ import StationList from './components/StationList';
 import StatusBanner from './components/StatusBanner';
 import DemoPage from './components/DemoPage';
 import StationsPage from './components/StationsPage';
+import ForecastPage from './components/ForecastPage';
 import { useFloodZones } from './hooks/useFloodZones';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { useSafeRoute } from './hooks/useSafeRoute';
@@ -16,6 +17,7 @@ export default function App() {
   const [selection, setSelection] = useState<SourceSelection>({ source: 'real', include_real: false });
   if (window.location.pathname === '/demo') return <DemoPage />;
   if (window.location.pathname === '/stations') return <StationsPage />;
+  if (window.location.pathname === '/forecast') return <ForecastPage />;
   return <Dashboard key={`${selection.source}:${selection.include_real}`} selection={selection} onSelection={setSelection} />;
 }
 
@@ -65,6 +67,7 @@ function Dashboard({ selection, onSelection }: { selection: SourceSelection; onS
         </header>
         <nav className="panel sub-nav">
           <a href="/stations">Cấu hình trạm thật →</a>
+          <br /><a href="/forecast">Dự báo độ sâu thử nghiệm →</a>
         </nav>
         <section className="panel">
           <label>Nguồn dữ liệu <select value={selection.source} onChange={(e) => onSelection({ source: e.target.value as 'real' | 'demo', include_real: false })}>

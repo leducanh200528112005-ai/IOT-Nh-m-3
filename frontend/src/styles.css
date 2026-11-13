@@ -77,6 +77,14 @@ select { margin-left: 8px; padding: 5px; max-width: 100%; }
 .sub-nav { padding: 8px 12px; font-size: 13px; }
 .sub-nav a { color: var(--accent); }
 
+.forecast-sidebar { width: 410px; }
+.forecast-file { display: block; width: 100%; margin: 10px 0; }
+.forecast-slider { width: 100%; }
+.forecast-card { border-left: 5px solid var(--accent); }
+.forecast-number { font-size: 36px; line-height: 1.2; font-weight: 700; margin: 12px 0; font-variant-numeric: tabular-nums; }
+.forecast-map-note { position: absolute; z-index: 900; right: 12px; top: 12px; max-width: calc(100% - 70px); padding: 10px; border-radius: 6px; background: white; box-shadow: 0 1px 5px #0003; font-size: 12px; }
+.forecast-empty { max-width: 650px; margin: 32px; }
+
 @media (max-width: 800px) {
   .app { flex-direction: column-reverse; }
   .map-wrap { flex: none; height: 52vh; }
