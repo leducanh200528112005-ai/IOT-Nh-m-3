@@ -9,6 +9,7 @@ import StationList from './components/StationList';
 import StationsPage from './components/StationsPage';
 import StatusBanner from './components/StatusBanner';
 import DemoPage from './components/demo/DemoPage';
+import ForecastPage from './components/ForecastPage';
 import { useFloodZones } from './hooks/useFloodZones';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { loadCachedRoute, useSafeRoute } from './hooks/useSafeRoute';
@@ -63,6 +64,7 @@ export default function App() {
           <Route path="/" element={<DashboardShell />} />
           <Route path="/demo" element={<DemoPage />} />
           <Route path="/stations" element={<StationsPage />} />
+          <Route path="/forecast" element={<ForecastPage />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
@@ -220,10 +222,10 @@ function Dashboard({
           <nav className="nav-links">
             <Link to="/demo" style={{ fontWeight: 600 }}>{t('navDemo')} →</Link>
             <Link to="/stations">{t('navStations')}</Link>
+            <Link to="/forecast">Dự báo NYC (Thử nghiệm)</Link>
             <Link to="/admin">{t('navAdmin')}</Link>
           </nav>
         </header>
-
         <section className="panel">
           <label>
             {t('dataSource')}{' '}
