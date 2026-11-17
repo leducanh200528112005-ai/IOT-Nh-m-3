@@ -328,8 +328,13 @@ def _parse_osrm_response(resp: httpx.Response, vehicle: str, settings: Any, lang
         dur_ratio = (dur / raw_dur) if raw_dur > 0 else 1.0
         steps = []
         legs = r.get("legs", [])
-        if legs:
-            for st in legs[0].get("steps", []):
+        for li, leg in enumerate(legs):
+            leg_steps = leg.get("steps", [])
+            for si, st in enumerate(leg_steps):
+                is_last_step = (si == len(leg_steps) - 1)
+                is_last_leg = (li == len(legs) - 1)
+                if is_last_step and not is_last_leg:
+                    continue  # Bỏ qua chỉ dẫn "Đến nơi" ở điểm né ngập trung gian
                 steps.append({
                     "instruction": _format_osrm_step(st, lang),
                     "distance_m": round(float(st.get("distance", 0.0)), 1),
