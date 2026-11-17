@@ -342,37 +342,44 @@ def _parse_osrm_response(resp: httpx.Response, vehicle: str, settings: Any, lang
 
 def _build_osrm_detour_waypoints(start_pt: list[float], end_pt: list[float], zones) -> list[list[float]]:
     detour_wps: list[list[float]] = []
+
+    # Priority 1: Tangent & diagonal bypass waypoints around intersected flood zones
+    direct = LineString([start_pt, end_pt])
+    geoms = list(getattr(zones, "geoms", [zones]))
+    for g in geoms:
+        if not g.is_empty and direct.intersects(g):
+            minx, miny, maxx, maxy = g.bounds
+            for pad in (0.003, 0.006, 0.010):
+                for cand in (
+                    [minx - pad, (miny + maxy) / 2],
+                    [maxx + pad, (miny + maxy) / 2],
+                    [(minx + maxx) / 2, miny - pad],
+                    [(minx + maxx) / 2, maxy + pad],
+                    [minx - pad, miny - pad],
+                    [maxx + pad, miny - pad],
+                    [minx - pad, maxy + pad],
+                    [maxx + pad, maxy + pad],
+                ):
+                    if not zones.intersects(Point(cand)) and cand not in detour_wps:
+                        detour_wps.append(cand)
+
+    # Priority 2: Perpendicular corridor offset waypoints
     dx = end_pt[0] - start_pt[0]
     dy = end_pt[1] - start_pt[1]
     line_len = math.hypot(dx, dy)
     if line_len > 0:
         nx = -dy / line_len
         ny = dx / line_len
-        for scale in (0.012, 0.025, 0.040):
-            for fraction in (0.4, 0.6):
+        for scale in (0.004, 0.008, 0.015, 0.030):
+            for fraction in (0.3, 0.5, 0.7):
                 bx = start_pt[0] + fraction * dx
                 by = start_pt[1] + fraction * dy
                 for sign in (-1, 1):
                     wp = [bx + sign * nx * scale, by + sign * ny * scale]
-                    if not zones.intersects(Point(wp)):
+                    if not zones.intersects(Point(wp)) and wp not in detour_wps:
                         detour_wps.append(wp)
 
-    # Also add tangent waypoints outside intersected zone bounding boxes for smarter local bypasses.
-    direct = LineString([start_pt, end_pt])
-    geoms = list(getattr(zones, "geoms", [zones]))
-    for g in geoms:
-        if not g.is_empty and direct.intersects(g):
-            minx, miny, maxx, maxy = g.bounds
-            pad = max(maxx - minx, maxy - miny) * 1.4 or 0.004
-            for cand in (
-                [minx - pad, (miny + maxy) / 2],
-                [maxx + pad, (miny + maxy) / 2],
-                [(minx + maxx) / 2, miny - pad],
-                [(minx + maxx) / 2, maxy + pad],
-            ):
-                if not zones.intersects(Point(cand)):
-                    detour_wps.append(cand)
-    return detour_wps[:8]
+    return detour_wps[:24]
 
 
 def _vehicle_label(vehicle: str, lang: str) -> str:
