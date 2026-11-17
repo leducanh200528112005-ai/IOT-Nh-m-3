@@ -1,0 +1,17 @@
+{
+  "name": "Bản đồ Ngập & Tìm Đường An Toàn",
+  "short_name": "FloodRoute",
+  "description": "Hệ thống IoT cảnh báo ngập lụt, AI dự báo sớm và tìm đường né ngập an toàn",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f3f6f8",
+  "theme_color": "#0b6b8a",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

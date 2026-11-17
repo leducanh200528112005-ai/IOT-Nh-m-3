@@ -2,6 +2,8 @@ import { API_BASE_URL } from '../config';
 
 export type ApiErrorKind = 'network' | 'timeout' | 'http' | 'parse' | 'aborted';
 
+export const ADMIN_KEY_STORAGE = 'flood_admin_api_key';
+
 export class ApiError extends Error {
   kind: ApiErrorKind;
   status?: number;
@@ -33,11 +35,16 @@ export async function apiFetch<T>(path: string, opts: Options = {}): Promise<T> 
   opts.signal?.addEventListener('abort', onAbort);
   if (opts.signal?.aborted) ctrl.abort();
 
+  const headers: Record<string, string> = {};
+  if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
+  const adminKey = sessionStorage.getItem(ADMIN_KEY_STORAGE)?.trim();
+  if (adminKey) headers['X-API-Key'] = adminKey;
+
   try {
     const res = await fetch(API_BASE_URL + path, {
       method: opts.method ?? 'GET',
-      headers: opts.body ? { 'Content-Type': 'application/json' } : undefined,
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      headers: Object.keys(headers).length ? headers : undefined,
+      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
       signal: ctrl.signal,
     });
     if (!res.ok) {

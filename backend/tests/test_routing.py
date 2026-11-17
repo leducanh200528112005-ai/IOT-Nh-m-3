@@ -127,13 +127,61 @@ def test_snap_too_far():
     assert error.value.code == "NO_SUITABLE_ROUTE"
 
 
-def test_missing_key_no_network():
+def test_empty_ors_key_uses_valhalla_with_steps():
     config = settings()
     config.ors_api_key = type(config.ors_api_key)("")
-    client = Mock()
-    with pytest.raises(RoutingError):
+    valhalla_payload = {
+        "trip": {
+            "summary": {"length": 1.2, "time": 95.0},
+            "legs": [{
+                "shape": "_p~iF~ps|U_ulLnnqC",  # dummy valid 2-pt? Let's construct exact encoded pts below.
+                "maneuvers": [{"instruction": "Đi thẳng", "length": 1.2, "time": 95.0, "type": 1}],
+            }],
+        }
+    }
+    # Encode polyline6 for [[106.69, 10.77], [106.71, 10.77]]
+    def enc6(vals):
+        out = []
+        prev = [0, 0]
+        for lat, lng in vals:
+            for idx, v in enumerate((lat, lng)):
+                cur = round(v * 1e6)
+                d = cur - prev[idx]
+                prev[idx] = cur
+                d = ~(d << 1) if d < 0 else (d << 1)
+                while d >= 0x20:
+                    out.append(chr((0x20 | (d & 0x1F)) + 63))
+                    d >>= 5
+                out.append(chr(d + 63))
+        return "".join(out)
+
+    valhalla_payload["trip"]["legs"][0]["shape"] = enc6([(10.77, 106.69), (10.77, 106.71)])
+    client = Mock(post=Mock(return_value=httpx.Response(200, json=valhalla_payload)))
+    req = RouteRequest(start={"longitude": START[0], "latitude": START[1]}, end={"longitude": END[0], "latitude": END[1]}, vehicle="motorcycle")
+    result = find_route(req, config, lambda: data(), client)
+    assert result["engine"] == "valhalla"
+    assert result["profile"] == "motorcycle"
+    assert result["steps"][0]["instruction"] == "Đi thẳng"
+    sent_json = client.post.call_args.kwargs["json"]
+    assert sent_json["costing"] == "motorcycle"
+    assert sent_json["costing_options"] == {"motorcycle": {"use_trails": 1.0}}
+
+
+def test_ors_vehicle_profile_mapping():
+    client = Mock(post=Mock(return_value=response()))
+    for vehicle, expected_path in (("car", "driving-car"), ("motorcycle", "cycling-regular"), ("pedestrian", "foot-walking")):
+        req = RouteRequest(start={"longitude": START[0], "latitude": START[1]}, end={"longitude": END[0], "latitude": END[1]}, vehicle=vehicle)
+        find_route(req, settings(), lambda: data(), client)
+        assert expected_path in client.post.call_args.args[0]
+
+
+def test_valhalla_and_osrm_both_unavailable_raises_no_route():
+    config = settings()
+    config.ors_api_key = type(config.ors_api_key)("")
+    client = Mock(post=Mock(side_effect=httpx.ConnectError("offline")), get=Mock(side_effect=httpx.ConnectError("offline")))
+    with pytest.raises(RoutingError) as error:
         call(client, config=config)
-    client.post.assert_not_called()
+    assert error.value.code == "NO_SUITABLE_ROUTE"
 
 
 @pytest.mark.parametrize("change", [
@@ -161,11 +209,18 @@ def test_endpoint_error_envelope_and_post_cors():
     config = settings()
     config.ors_api_key = type(config.ors_api_key)("")
     with TestClient(create_app(config)) as client:
-        result = client.post("/api/routes/safe", json=request().model_dump())
-        assert result.status_code == 503
-        assert result.json()["error"]["code"] == "ROUTING_UNAVAILABLE"
         result = client.post("/api/routes/safe", json={"start": {"latitude": 999}})
         assert result.status_code == 422
         assert result.json()["error"]["code"] == "INVALID_INPUT"
         result = client.options("/api/routes/safe", headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "POST"})
         assert result.status_code == 200
+        # Rate limiter enforcement (per-minute limit = 2)
+    limited_cfg = settings(rate_limit_route_per_min=1)
+    with TestClient(create_app(limited_cfg)) as client:
+        first = client.post("/api/routes/safe", json={"start": {"latitude": 999}})
+        assert first.status_code == 422
+        ok_req = request().model_dump()
+        client.post("/api/routes/safe", json=ok_req)
+        second = client.post("/api/routes/safe", json=ok_req)
+        assert second.status_code == 429
+        assert second.json()["error"]["code"] == "ROUTING_RATE_LIMITED"

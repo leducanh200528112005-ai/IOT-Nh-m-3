@@ -1,8 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { createStation, deleteStation, listStations, updateStation } from '../api/stationsApi';
 import { useFloodZones } from '../hooks/useFloodZones';
+import { useI18n } from '../i18n';
 import type { LatLng, StationConfig } from '../types';
 import { QUALITY_LABEL } from '../utils/status';
+import FloodHistoryModal from './FloodHistoryModal';
 import MapView from './MapView';
 
 const fields = [
@@ -10,7 +13,7 @@ const fields = [
   ['longitude', 'Kinh độ', -180, 180],
   ['warning_threshold_cm', 'Ngưỡng vàng (cm)', 0, 10000],
   ['danger_threshold_cm', 'Ngưỡng đỏ (cm)', 0.001, 10000],
-  ['exclusion_radius_m', 'Bán kính vùng cấm (m)', 0.001, 1000],
+  ['exclusion_radius_m', 'Bán kính vùng ngập lụt (m)', 0.001, 1000],
 ] as const;
 type NumericField = typeof fields[number][0];
 type Draft = { id: string; name: string; is_active: boolean } & Record<NumericField, string>;
@@ -29,8 +32,10 @@ function toDraft(station: StationConfig): Draft {
 const DEVICE_ID = /^[A-Za-z0-9_-]+$/;
 
 export default function StationsPage() {
+  const { t } = useI18n();
   const [stations, setStations] = useState<StationConfig[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [chartId, setChartId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(blank);
   const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -107,14 +112,14 @@ export default function StationsPage() {
 
   return <div className="app">
     <aside className="sidebar">
-      <header><h1>Cấu hình trạm thật</h1><a href="/">← Bản đồ và tìm đường</a></header>
-      <div className="banner banner-info">Mã trạm phải trùng <code>device_id</code> mà ESP32 gửi trong topic <code>flood/&lt;mã&gt;/telemetry</code>. Không đổi được mã sau khi tạo.</div>
+      <header><h1>{t('navStations')}</h1><Link to="/">{t('navBack')}</Link></header>
+      <div className="banner banner-info">Mã định danh trạm (Hardware ID) được liên kết trực tiếp với thiết bị quan trắc ESP32 thực địa.</div>
       {(error || flood.error) && <div className="banner banner-err" role="alert">{error || flood.error}</div>}
       {notice && <div className="banner banner-info" role="status">{notice}</div>}
       <form className="panel demo-form" onSubmit={save}>
         <h2>{selected ? 'Chỉnh sửa trạm' : 'Tạo trạm mới'}</h2>
         <fieldset disabled={busy}>
-          <label>Mã trạm (device_id)
+          <label>Mã định danh trạm (Hardware ID)
             <input required maxLength={64} pattern="[A-Za-z0-9_\-]+" placeholder="station-02"
               value={draft.id} readOnly={!!selected}
               onChange={(e) => setDraft({ ...draft, id: e.target.value })} />
@@ -137,7 +142,7 @@ export default function StationsPage() {
         <p className="sub">Bấm trạm để sửa. Kéo marker T để lưu vị trí mới. Trạm tắt không hiện trên bản đồ.</p>
         <ul className="stations">{stations.map((station) => {
           const state = live.get(station.id);
-          return <li key={station.id}>
+          return <li key={station.id} className="point-row">
             <button disabled={busy} className={`station${selected === station.id ? ' selected' : ''}`} onClick={() => choose(station.id)}>
               <span className="st-main">
                 <strong>{station.name}</strong>
@@ -148,6 +153,7 @@ export default function StationsPage() {
                 </span>
               </span>
             </button>
+            <button type="button" className="icon-btn" title="Xem biểu đồ" onClick={() => setChartId(station.id)}>📊</button>
           </li>;
         })}</ul>
       </section>
@@ -159,5 +165,6 @@ export default function StationsPage() {
         onMoveStation={busy ? undefined : move} />
       {picking && <div className="pick-hint" role="status">Bấm bản đồ để điền tọa độ, rồi bấm Lưu trạm.</div>}
     </main>
+    {chartId && <FloodHistoryModal pointId={chartId} source="real" onClose={() => setChartId(null)} />}
   </div>;
 }

@@ -8,7 +8,7 @@ from app.models import Station
 from app.schemas import Telemetry
 
 
-@pytest.mark.parametrize("depth,expected", [(0, "normal"), (9.9, "normal"), (10, "warning"), (20, "warning"), (20.1, "danger")])
+@pytest.mark.parametrize("depth,expected", [(0, "normal"), (9.9, "normal"), (10, "warning"), (19.9, "warning"), (20, "danger"), (20.1, "danger")])
 def test_thresholds(depth, expected):
     assert classify(depth, 10, 20) == expected
 

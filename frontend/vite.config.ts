@@ -6,6 +6,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     server: {
+      allowedHosts: true,
       // Dev: chuyển /api sang backend nhóm 2 để tránh lỗi CORS
       proxy: { '/api': env.VITE_PROXY_TARGET || 'http://localhost:8000' },
     },
