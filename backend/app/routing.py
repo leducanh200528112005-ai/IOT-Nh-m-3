@@ -303,6 +303,77 @@ def _format_osrm_step(step: dict, lang: str) -> str:
     return f"{base} vào {name}" if name else base
 
 
+def _prune_osrm_backtracks(
+    coords: list[list[float]],
+    steps: list[dict],
+    dur_ratio: float,
+) -> tuple[LineString, float, float, list[dict]]:
+    cleaned = [list(c) for c in coords]
+    removed_junctions = []
+    changed = True
+    while changed:
+        changed = False
+        for i in range(len(cleaned) - 2):
+            for j in range(len(cleaned) - 1, i + 2, -1):
+                d = math.hypot(cleaned[i][0] - cleaned[j][0], cleaned[i][1] - cleaned[j][1])
+                if d < 0.00015:  # ~15 meters
+                    loop_len = j - i
+                    half = loop_len // 2
+                    is_bt = True
+                    for k in range(1, half + 1):
+                        diff = math.hypot(cleaned[i + k][0] - cleaned[j - k][0], cleaned[i + k][1] - cleaned[j - k][1])
+                        if diff > 0.00025:  # ~25 meters
+                            is_bt = False
+                            break
+                    if is_bt and loop_len > 1:
+                        junc = cleaned[i]
+                        removed_junctions.append((junc, cleaned[i:j + 1]))
+                        cleaned = cleaned[:i + 1] + cleaned[j:]
+                        changed = True
+                        break
+            if changed:
+                break
+
+    if not removed_junctions:
+        line = _validate_coords(cleaned)
+        dist = sum(_GEOD.inv(cleaned[i][0], cleaned[i][1], cleaned[i + 1][0], cleaned[i + 1][1])[2] for i in range(len(cleaned) - 1)) if len(cleaned) > 1 else 0.0
+        dur = sum(s.get("duration_s", 0.0) for s in steps)
+        return line, dist, dur, steps
+
+    # Clean steps that occurred inside the spur
+    cleaned_steps = []
+    for st in steps:
+        loc = st.get("location", [0, 0])
+        name = st.get("name", "")
+        mtype = st.get("type", "")
+        drop = False
+        for junc, spur_coords in removed_junctions:
+            if any(math.hypot(loc[0] - sc[0], loc[1] - sc[1]) < 0.0003 for sc in spur_coords[1:-1]):
+                drop = True
+                break
+            if mtype in ("uturn", "depart") and math.hypot(loc[0] - junc[0], loc[1] - junc[1]) < 0.001:
+                drop = True
+                break
+            if ("Ngõ" in name or "Ngách" in name) and math.hypot(loc[0] - junc[0], loc[1] - junc[1]) < 0.0003:
+                drop = True
+                break
+        if not drop:
+            cleaned_steps.append(st)
+
+    merged_steps = []
+    for st in cleaned_steps:
+        if merged_steps and merged_steps[-1].get("instruction") == st.get("instruction") and st.get("name"):
+            merged_steps[-1]["distance_m"] = round(merged_steps[-1]["distance_m"] + st["distance_m"], 1)
+            merged_steps[-1]["duration_s"] = round(merged_steps[-1]["duration_s"] + st["duration_s"], 1)
+        else:
+            merged_steps.append(st)
+
+    line = _validate_coords(cleaned)
+    dist = sum(_GEOD.inv(cleaned[i][0], cleaned[i][1], cleaned[i + 1][0], cleaned[i + 1][1])[2] for i in range(len(cleaned) - 1)) if len(cleaned) > 1 else 0.0
+    dur = sum(s.get("duration_s", 0.0) for s in merged_steps)
+    return line, dist, dur, merged_steps
+
+
 def _parse_osrm_response(resp: httpx.Response, vehicle: str, settings: Any, lang: str) -> list[tuple[LineString, float, float, list[dict]]]:
     if resp.status_code != 200:
         logger.warning("OSRM returned HTTP %s", resp.status_code)
@@ -313,7 +384,6 @@ def _parse_osrm_response(resp: httpx.Response, vehicle: str, settings: Any, lang
     routes = []
     for r in data.get("routes", []):
         coords = r["geometry"]["coordinates"]
-        line = _validate_coords(coords)
         dist = float(r["distance"])
         raw_dur = float(r["duration"])
         # Public OSRM only exposes driving speed profiles accurately; heuristic scale adjusts duration.
@@ -340,8 +410,11 @@ def _parse_osrm_response(resp: httpx.Response, vehicle: str, settings: Any, lang
                     "distance_m": round(float(st.get("distance", 0.0)), 1),
                     "duration_s": round(float(st.get("duration", 0.0)) * dur_ratio, 1),
                     "type": str(st.get("maneuver", {}).get("type", "")),
+                    "name": str(st.get("name", "")),
+                    "location": st.get("maneuver", {}).get("location", [0, 0]),
                 })
-        routes.append((line, dist, dur, steps))
+        line, clean_dist, clean_dur, clean_steps = _prune_osrm_backtracks(coords, steps, dur_ratio)
+        routes.append((line, clean_dist, clean_dur, clean_steps))
     return routes
 
 
