@@ -9,6 +9,15 @@ import { LEVEL_INFO, QUALITY_LABEL, displayLevel } from '../utils/status';
 
 export type PickMode = 'origin' | 'destination' | 'demo' | null;
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 interface Props {
   stations: Station[];
   zones: FeatureCollection | null;
@@ -62,8 +71,20 @@ export default function MapView(p: Props) {
         <GeoJSON
           key={p.zonesKey}
           data={p.zones}
-          style={{ color: '#8e1b16', weight: 2, dashArray: '6 4', fillColor: '#c8312b', fillOpacity: 0.28 }}
-          onEachFeature={(f, layer) => layer.bindTooltip(String(f.properties?.name ?? 'Vùng cấm đi qua'))}
+          style={(f) => {
+            const isPred = f?.properties?.is_predicted;
+            return {
+              color: isPred ? '#a855f7' : '#8e1b16',
+              weight: 2,
+              dashArray: isPred ? '4 4' : '6 4',
+              fillColor: isPred ? '#a855f7' : '#c8312b',
+              fillOpacity: isPred ? 0.22 : 0.28,
+            };
+          }}
+          onEachFeature={(f, layer) => {
+            const raw = f?.properties?.warning_message || (f?.properties?.is_predicted ? '🤖 AI Dự báo nguy cơ ngập lụt đỏ' : 'Vùng cấm đi qua');
+            layer.bindTooltip(escapeHtml(String(raw)));
+          }}
         />
       )}
 
@@ -82,42 +103,77 @@ export default function MapView(p: Props) {
         const lv = displayLevel(s);
         const selected = s.id === p.selectedId;
         if (s.source === 'demo') {
-          return <Marker key={s.id} position={[s.latitude, s.longitude]}
-            icon={divIcon({ className: 'demo-map-marker', html: `<span style="background:${LEVEL_INFO[lv].color}">D</span>`, iconSize: [24, 24], iconAnchor: [12, 12] })}
-            draggable={!!p.onMoveDemo}
-            eventHandlers={{ click: () => p.onSelectStation(s.id), dragend: (event) => {
-              const location = (event.target as LeafletMarker).getLatLng();
-              p.onMoveDemo?.(s.id, { lat: location.lat, lng: location.lng });
-            } }}>
-            <Tooltip><strong>{s.name}</strong><br />MÔ PHỎNG · {LEVEL_INFO[lv].label} · {s.water_depth_cm} cm</Tooltip>
-          </Marker>;
+          return (
+            <Marker
+              key={s.id}
+              position={[s.latitude, s.longitude]}
+              icon={divIcon({
+                className: 'demo-map-marker',
+                html: `<span style="background:${LEVEL_INFO[lv].color}">${lv === 'predicted_danger' ? '⚡' : '💧'}</span>`,
+                iconSize: [24, 24],
+                iconAnchor: [12, 12],
+              })}
+              draggable={!!p.onMoveDemo}
+              eventHandlers={{
+                click: () => p.onSelectStation(s.id),
+                dragend: (event) => {
+                  const location = (event.target as LeafletMarker).getLatLng();
+                  p.onMoveDemo?.(s.id, { lat: location.lat, lng: location.lng });
+                },
+              }}
+            >
+              <Tooltip>
+                <strong>{s.name}</strong><br />
+                Kịch bản mô phỏng · {LEVEL_INFO[lv].label} · {s.water_depth_cm} cm
+                {s.ai_prediction && (
+                  <div>
+                    <strong>AI dự báo:</strong> sau 15p: {s.ai_prediction.predicted_15m}cm | xác suất vượt ngưỡng nguy hiểm: {s.ai_prediction.danger_probability}%
+                  </div>
+                )}
+              </Tooltip>
+            </Marker>
+          );
         }
-        const tooltip = <>
-          <strong>{s.name}</strong> · Thực tế
-          <br />
-          {LEVEL_INFO[lv].label}
-          {s.water_depth_cm != null && s.data_quality !== 'missing' ? `, ${s.water_depth_cm} cm` : ''}
-          <br />
-          {QUALITY_LABEL[s.data_quality]} · {formatTime(s.measured_at ?? s.received_at)}
-        </>;
+        const tooltip = (
+          <>
+            <strong>{s.name}</strong> · Trạm thực địa
+            <br />
+            {LEVEL_INFO[lv].label}
+            {s.water_depth_cm != null && s.data_quality !== 'missing' ? `, ${s.water_depth_cm} cm` : ''}
+            <br />
+            {QUALITY_LABEL[s.data_quality]} · {formatTime(s.measured_at ?? s.received_at)}
+          </>
+        );
         const style = {
           fillColor: LEVEL_INFO[lv].color,
           fillOpacity: s.data_quality === 'fresh' ? 0.95 : 0.55,
           color: selected ? '#12263a' : '#ffffff',
           weight: selected ? 3 : 2,
-          // Dữ liệu cũ/mất: viền đứt nét để phân biệt với mức ngập
           dashArray: s.data_quality === 'fresh' ? undefined : '3 3',
         };
-        // Leaflet chỉ cho kéo Marker, không kéo được CircleMarker.
         if (p.onMoveStation) {
-          return <Marker key={s.id} position={[s.latitude, s.longitude]} draggable
-            icon={divIcon({ className: 'demo-map-marker', html: `<span style="background:${LEVEL_INFO[lv].color}">T</span>`, iconSize: [24, 24], iconAnchor: [12, 12] })}
-            eventHandlers={{ click: () => p.onSelectStation(s.id), dragend: (event) => {
-              const location = (event.target as LeafletMarker).getLatLng();
-              p.onMoveStation?.(s.id, { lat: location.lat, lng: location.lng });
-            } }}>
-            <Tooltip>{tooltip}</Tooltip>
-          </Marker>;
+          return (
+            <Marker
+              key={s.id}
+              position={[s.latitude, s.longitude]}
+              draggable
+              icon={divIcon({
+                className: 'demo-map-marker',
+                html: `<span style="background:${LEVEL_INFO[lv].color}">T</span>`,
+                iconSize: [24, 24],
+                iconAnchor: [12, 12],
+              })}
+              eventHandlers={{
+                click: () => p.onSelectStation(s.id),
+                dragend: (event) => {
+                  const location = (event.target as LeafletMarker).getLatLng();
+                  p.onMoveStation?.(s.id, { lat: location.lat, lng: location.lng });
+                },
+              }}
+            >
+              <Tooltip>{tooltip}</Tooltip>
+            </Marker>
+          );
         }
         return (
           <CircleMarker

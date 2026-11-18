@@ -20,12 +20,26 @@ class Settings(BaseSettings):
     mqtt_password: SecretStr
     mqtt_enabled: bool = True
     mqtt_client_id: str = "flood-backend"
-    data_stale_seconds: int = Field(default=15, gt=0)
+    data_stale_seconds: int = Field(default=120, gt=0)
     cors_origins: list[str] = ["http://localhost:5173"]
     ors_api_key: SecretStr = SecretStr("")
     ors_base_url: str = "https://api.openrouteservice.org"
     ors_timeout_seconds: float = Field(default=15, gt=0, le=60)
     ors_max_snap_m: float = Field(default=50, gt=0, le=500)
+    ors_fallback_to_valhalla: bool = False
+    valhalla_url: str = "https://valhalla1.openstreetmap.de/route"
+    valhalla_status_url: str = "https://valhalla1.openstreetmap.de/status"
+    valhalla_timeout_seconds: float = Field(default=8.0, gt=0, le=60)
+    osrm_base_url: str = "https://router.project-osrm.org"
+    osrm_timeout_seconds: float = Field(default=3.0, gt=0, le=30)
+    photon_base_url: str = "https://photon.komoot.io"
+    motorcycle_zone_scale: float = Field(default=0.65, gt=0.1, le=1.0)
+    pedestrian_zone_scale: float = Field(default=0.5, gt=0.1, le=1.0)
+    motorcycle_speed_kmh: float = Field(default=28.0, gt=1.0, le=120.0)
+    pedestrian_speed_kmh: float = Field(default=5.0, gt=0.5, le=20.0)
+    max_demo_points: int = Field(default=30, gt=0, le=200)
+    rate_limit_route_per_min: int = Field(default=30, ge=0)
+    admin_api_key: SecretStr = SecretStr("")
     demo_enabled: bool = False
     stations_enabled: bool = False
 

@@ -54,10 +54,12 @@ def test_combined_keeps_real_validation(quality, sufficient):
     assert {s["source"] for s in data["stations"]} == {"real", "demo"}
 
 
-def test_no_active_demo_points_not_sufficient():
+def test_empty_demo_map_allows_routing_on_clean_roads():
     session = Mock()
     session.scalars.return_value = []
-    assert not selected_snapshot(session, settings(), "demo")["routing_data_sufficient"]
+    data = selected_snapshot(session, settings(), "demo")
+    assert data["stations"] == []
+    assert data["routing_data_sufficient"]
 
 
 def test_real_mode_does_not_read_demo_table():
@@ -153,6 +155,16 @@ def test_crud_and_snapshots_in_postgresql():
             assert identifier not in [f["properties"]["station_id"] for f in data["flood_zones"]["features"]]
             assert client.patch(f"/api/demo-points/{identifier}", json={"is_active": False}).status_code == 200
             assert identifier not in [s["id"] for s in client.get("/api/flood-zones?source=demo").json()["stations"]]
+            hist = client.get(f"/api/flood-zones/{identifier}/history?source=demo")
+            assert hist.status_code == 200
+            assert len(hist.json()["points"]) == 5
+
+            batch = client.post("/api/demo-points/batch", json=[
+                {"name": "Batch-1-" + uuid4().hex[:6], "latitude": 20.98, "longitude": 105.77, "water_depth_cm": 5},
+                {"name": "Batch-2-" + uuid4().hex[:6], "latitude": 20.981, "longitude": 105.771, "water_depth_cm": 32},
+            ])
+            assert batch.status_code == 201
+            created_ids.extend(item["id"] for item in batch.json())
             assert client.delete(f"/api/demo-points/{identifier}").status_code == 204
             assert client.delete(f"/api/demo-points/{identifier}").status_code == 404
     finally:

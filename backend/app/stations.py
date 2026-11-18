@@ -1,11 +1,12 @@
 """Opt-in station configuration. The station id is the MQTT device_id, so it is immutable."""
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Header, Response
 from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from app.models import Measurement, Station
 from app.routing import RoutingError
 from app.schemas import StationCreate, StationPatch, StationResponse
+from app.security import verify_admin_key
 
 
 def require_stations(settings):
@@ -16,6 +17,9 @@ def require_stations(settings):
 def create_station_router(settings, sessions):
     def enabled():
         require_stations(settings)
+
+    def admin_guard(x_api_key: str | None = Header(default=None)):
+        verify_admin_key(settings, x_api_key)
 
     router = APIRouter(prefix="/api/stations", tags=["Stations"], dependencies=[Depends(enabled)])
 
@@ -30,7 +34,7 @@ def create_station_router(settings, sessions):
         with sessions() as session:
             return list(session.scalars(select(Station).order_by(Station.created_at, Station.id)))
 
-    @router.post("", response_model=StationResponse, status_code=201)
+    @router.post("", response_model=StationResponse, status_code=201, dependencies=[Depends(admin_guard)])
     def create_station(request: StationCreate):
         with sessions() as session:
             if session.get(Station, request.id) is not None:
@@ -41,7 +45,7 @@ def create_station_router(settings, sessions):
             session.refresh(station)
             return StationResponse.model_validate(station)
 
-    @router.patch("/{station_id}", response_model=StationResponse)
+    @router.patch("/{station_id}", response_model=StationResponse, dependencies=[Depends(admin_guard)])
     def update_station(station_id: str, request: StationPatch):
         with sessions() as session:
             station = get_station(session, station_id)
@@ -58,7 +62,7 @@ def create_station_router(settings, sessions):
             session.refresh(station)
             return StationResponse.model_validate(station)
 
-    @router.delete("/{station_id}", status_code=204)
+    @router.delete("/{station_id}", status_code=204, dependencies=[Depends(admin_guard)])
     def delete_station(station_id: str):
         with sessions() as session:
             station = get_station(session, station_id)

@@ -1,9 +1,11 @@
+import { useI18n } from '../i18n';
 import { LEVEL_INFO } from '../utils/status';
 
 export default function Legend() {
+  const { t } = useI18n();
   return (
-    <section className="panel" aria-label="Chú giải">
-      <h2>Chú giải</h2>
+    <section className="panel" aria-label={t('legendTitle')}>
+      <h2>{t('legendTitle')}</h2>
       <p className="sub">Màu = mức ngập</p>
       <ul className="legend">
         {(Object.keys(LEVEL_INFO) as (keyof typeof LEVEL_INFO)[]).map((k) => (

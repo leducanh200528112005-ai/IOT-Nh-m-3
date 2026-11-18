@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ApiError } from '../api/client';
 import { fetchFloodZones } from '../api/floodApi';
-import { DATA_EXPIRE_MS, POLL_INTERVAL_MS, STALE_AFTER_MS } from '../config';
+import { API_BASE_URL, DATA_EXPIRE_MS, POLL_INTERVAL_MS, STALE_AFTER_MS } from '../config';
 import type { FloodZonesResponse, SourceSelection } from '../types';
 import { floodVersion } from '../utils/status';
 import { useNow } from './useNow';
 
 /**
- * Poll /api/flood-zones. Dùng setTimeout nối tiếp (đợi request xong mới hẹn lần sau)
- * nên không bao giờ có hai request chồng nhau. Gỡ component => hủy timer + request.
+ * Kết hợp SSE stream (push ngay khi thay đổi) và polling dự phòng.
+ * Gỡ component => hủy SSE, timer và request.
  */
 export function useFloodZones(selection: SourceSelection, refreshKey = 0) {
   const [data, setData] = useState<FloodZonesResponse | null>(null);
@@ -20,17 +20,46 @@ export function useFloodZones(selection: SourceSelection, refreshKey = 0) {
   useEffect(() => {
     let stopped = false;
     let timer: number | undefined;
+    let sse: EventSource | null = null;
+    let sseConnected = false;
     const ctrl = new AbortController();
     setData(null);
     setError(null);
     setLoading(true);
     setLastOkAt(null);
 
+    if (typeof EventSource !== 'undefined') {
+      try {
+        const streamUrl = `${API_BASE_URL}/api/flood-zones/stream?source=${selection.source}&include_real=${selection.include_real}`;
+        sse = new EventSource(streamUrl);
+        sse.onopen = () => {
+          if (!stopped) sseConnected = true;
+        };
+        sse.onmessage = (event) => {
+          if (stopped) return;
+          try {
+            const parsed = JSON.parse(event.data) as FloodZonesResponse;
+            setData(parsed);
+            setError(null);
+            setLastOkAt(Date.now());
+            setLoading(false);
+          } catch {
+            // Ignore malformed SSE tick.
+          }
+        };
+        sse.onerror = () => {
+          sseConnected = false;
+        };
+      } catch {
+        sseConnected = false;
+      }
+    }
+
     const tick = async () => {
       try {
         const d = await fetchFloodZones(selection, ctrl.signal);
         if (stopped) return;
-        setData(d); // lỗi thì KHÔNG xóa data cũ, chỉ gắn nhãn
+        setData(d);
         setError(null);
         setLastOkAt(Date.now());
       } catch (e) {
@@ -39,7 +68,8 @@ export function useFloodZones(selection: SourceSelection, refreshKey = 0) {
       } finally {
         if (!stopped) {
           setLoading(false);
-          timer = window.setTimeout(tick, POLL_INTERVAL_MS);
+          // When SSE stream is healthy, keep a slower heartbeat poll so timestamps stay fresh without load.
+          timer = window.setTimeout(tick, sseConnected ? POLL_INTERVAL_MS * 2 : POLL_INTERVAL_MS);
         }
       }
     };
@@ -49,6 +79,7 @@ export function useFloodZones(selection: SourceSelection, refreshKey = 0) {
       stopped = true;
       clearTimeout(timer);
       ctrl.abort();
+      sse?.close();
     };
   }, [selection.source, selection.include_real, refreshKey]);
 

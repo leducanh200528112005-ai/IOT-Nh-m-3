@@ -4,6 +4,7 @@ export const LEVEL_INFO: Record<FloodLevel, { label: string; color: string }> = 
   normal: { label: 'Bình thường', color: '#2f9e6e' },
   warning: { label: 'Cảnh báo', color: '#e3b505' },
   danger: { label: 'Nguy hiểm', color: '#c8312b' },
+  predicted_danger: { label: 'Dự báo nguy cơ ngập sớm (AI)', color: '#a855f7' },
   unknown: { label: 'Không rõ', color: '#8a949e' },
 };
 

@@ -49,6 +49,8 @@ class RouteRequest(SourceSelection):
     model_config = ConfigDict(extra="forbid")
     start: RoutePoint
     end: RoutePoint
+    vehicle: Literal["car", "motorcycle", "pedestrian"] = "car"
+    lang: Literal["vi", "en"] = "vi"
 
     @model_validator(mode="after")
     def distinct_points(self):
@@ -63,8 +65,9 @@ class DemoPointCreate(BaseModel):
     latitude: float = Field(gt=-90, lt=90)
     longitude: float = Field(ge=-180, le=180)
     water_depth_cm: float = Field(default=0, ge=0, le=10000)
+    rise_rate_cm_min: float = Field(default=0.0, ge=0, le=100)
     warning_threshold_cm: float = Field(default=10, ge=0, le=10000)
-    danger_threshold_cm: float = Field(default=20, gt=0, le=10000)
+    danger_threshold_cm: float = Field(default=30, gt=0, le=10000)
     exclusion_radius_m: float = Field(default=40, gt=0, le=1000)
     is_active: bool = Field(default=True, strict=True)
 
@@ -81,6 +84,7 @@ class DemoPointPatch(BaseModel):
     latitude: float | None = Field(default=None, gt=-90, lt=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     water_depth_cm: float | None = Field(default=None, ge=0, le=10000)
+    rise_rate_cm_min: float | None = Field(default=None, ge=0, le=100)
     warning_threshold_cm: float | None = Field(default=None, ge=0, le=10000)
     danger_threshold_cm: float | None = Field(default=None, gt=0, le=10000)
     exclusion_radius_m: float | None = Field(default=None, gt=0, le=1000)
@@ -108,7 +112,7 @@ class StationCreate(BaseModel):
     latitude: float = Field(gt=-90, lt=90)
     longitude: float = Field(ge=-180, le=180)
     warning_threshold_cm: float = Field(default=10, ge=0, le=10000)
-    danger_threshold_cm: float = Field(default=20, gt=0, le=10000)
+    danger_threshold_cm: float = Field(default=30, gt=0, le=10000)
     exclusion_radius_m: float = Field(default=40, gt=0, le=1000)
     is_active: bool = Field(default=True, strict=True)
 

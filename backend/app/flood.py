@@ -5,11 +5,12 @@ from shapely.geometry import Point, mapping
 from shapely import transform
 from sqlalchemy import func, select
 
+from app.ai.predictor import predict_flood_risk
 from app.models import Measurement, Station
 
 
 def classify(depth: float, warning: float, danger: float) -> str:
-    if depth > danger:
+    if depth >= danger:
         return "danger"
     return "warning" if depth >= warning else "normal"
 
@@ -34,6 +35,7 @@ def snapshot(session, stale_seconds: int) -> dict:
             .limit(1)
         )
         quality, hazard = "missing", "unknown"
+        ai_info = None
         if latest:
             if not latest.sensor_ok:
                 quality = "invalid"
@@ -42,15 +44,33 @@ def snapshot(session, stale_seconds: int) -> dict:
             else:
                 quality = "fresh"
                 hazard = classify(latest.water_depth_cm, station.warning_threshold_cm, station.danger_threshold_cm)
+                
+                # AI dự báo nguy cơ ngập lụt sớm từ chuỗi số đo lịch sử
+                ai_info = None
+                recent = session.scalars(
+                    select(Measurement).where(Measurement.station_id == station.id, Measurement.sensor_ok.is_(True))
+                    .order_by(func.coalesce(Measurement.measured_at, Measurement.received_at).desc(), Measurement.id.desc())
+                    .limit(10)
+                ).all()
+                if len(recent) >= 2 and latest.water_depth_cm is not None:
+                    lag_10 = recent[-1].water_depth_cm or latest.water_depth_cm
+                    lag_5 = recent[len(recent) // 2].water_depth_cm or latest.water_depth_cm
+                    ai_info = predict_flood_risk(latest.water_depth_cm, lag_5, lag_10, station.danger_threshold_cm)
+                    if hazard != "danger" and ai_info["is_predicted_danger"]:
+                        hazard = "predicted_danger"
         # Keep the last confirmed danger zone if the latest data becomes unusable.
         last_valid = session.scalar(
             select(Measurement).where(Measurement.station_id == station.id, Measurement.sensor_ok.is_(True))
             .order_by(func.coalesce(Measurement.measured_at, Measurement.received_at).desc(), Measurement.id.desc()).limit(1)
         )
-        retained = quality != "fresh" and last_valid is not None and last_valid.water_depth_cm > station.danger_threshold_cm
-        if hazard == "danger" or retained:
+        retained = quality != "fresh" and last_valid is not None and last_valid.water_depth_cm >= station.danger_threshold_cm
+        if hazard in ("danger", "predicted_danger") or retained:
+            is_predicted = (hazard == "predicted_danger")
             features.append({"type": "Feature", "geometry": circle(station), "properties": {
                 "station_id": station.id, "radius_m": station.exclusion_radius_m, "retained_due_to_uncertainty": retained, "source": "real",
+                "is_predicted": is_predicted,
+                "warning_message": ai_info["warning_message"] if is_predicted and ai_info else None,
+                "predicted_15m": ai_info["predicted_15m"] if ai_info else None,
             }})
         stations.append({
             "id": station.id, "name": station.name, "source": "real",
@@ -59,6 +79,7 @@ def snapshot(session, stale_seconds: int) -> dict:
             "measured_at": latest.measured_at if latest else None,
             "received_at": latest.received_at if latest else None,
             "hazard_state": hazard, "data_quality": quality,
+            "ai_prediction": ai_info if latest and quality == "fresh" else None,
         })
     return {"generated_at": now, "stations": stations,
             "flood_zones": {"type": "FeatureCollection", "features": features},
