@@ -9,8 +9,9 @@ import StationList from './components/StationList';
 import StationsPage from './components/StationsPage';
 import StatusBanner from './components/StatusBanner';
 import DemoPage from './components/demo/DemoPage';
-import ForecastPage from './components/ForecastPage';
+import { ROUTE_STALE_GRACE_PERIOD_MS } from './config';
 import { useFloodZones } from './hooks/useFloodZones';
+import { useNow } from './hooks/useNow';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { loadCachedRoute, useSafeRoute } from './hooks/useSafeRoute';
 import { useTheme } from './hooks/useTheme';
@@ -64,7 +65,6 @@ export default function App() {
           <Route path="/" element={<DashboardShell />} />
           <Route path="/demo" element={<DemoPage />} />
           <Route path="/stations" element={<StationsPage />} />
-          <Route path="/forecast" element={<ForecastPage />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
@@ -111,6 +111,7 @@ function Dashboard({
   const flood = useFloodZones(selection);
   const online = useOnlineStatus();
   const route = useSafeRoute(cached?.state);
+  const now = useNow(1000);
 
   const [origin, setOrigin] = useState<LatLng | null>(sharedOrigin ?? cached?.origin ?? null);
   const [destination, setDestination] = useState<LatLng | null>(sharedDest ?? cached?.destination ?? null);
@@ -150,15 +151,52 @@ function Dashboard({
     }
   }, [hasSharedRoute, flood.version, origin, destination, selection, vehicle, lang, route]);
 
-  const routeFeature = route.state.status === 'ok' ? route.state.result?.route : undefined;
+  const selectedRouteIndex = route.state.selectedRouteIndex ?? 0;
+  const allRoutes = useMemo(() => {
+    if (route.state.status !== 'ok' || !route.state.result) return [];
+    if (route.state.result.routes && route.state.result.routes.length > 0) {
+      return route.state.result.routes;
+    }
+    return [
+      {
+        id: 0,
+        route: route.state.result.route,
+        distance_m: route.state.result.distance_m,
+        duration_s: route.state.result.duration_s,
+        steps: route.state.result.steps,
+        is_primary: true,
+        summary: 'Tuyến tối ưu nhất',
+      },
+    ];
+  }, [route.state]);
+
+  const activeRoute = allRoutes[selectedRouteIndex] ?? allRoutes[0];
+  const routeFeature = activeRoute?.route ?? (route.state.status === 'ok' ? route.state.result?.route : undefined);
   const routePath = useMemo(() => (routeFeature ? lineToLatLngs(routeFeature) : null), [routeFeature]);
 
+  const allMapRoutes = useMemo(() => {
+    return allRoutes.map((r) => ({
+      id: r.id,
+      path: lineToLatLngs(r.route),
+      distance_m: r.distance_m,
+      duration_s: r.duration_s,
+      is_primary: r.is_primary,
+    }));
+  }, [allRoutes]);
+
   // Cảnh báo tuyến lỗi thời; KHÔNG tự gọi lại backend mỗi lần poll.
+  // Trong 1 phút 30 giây (90s) đầu sau khi tính, giữ tuyến luôn hợp lệ để người dùng kịp quan sát/di chuyển.
+  const calculatedAtMs = route.state.result?.calculated_at ? Date.parse(route.state.result.calculated_at) : null;
+  const isWithinGracePeriod = calculatedAtMs !== null && !Number.isNaN(calculatedAtMs) && (now - calculatedAtMs < ROUTE_STALE_GRACE_PERIOD_MS);
+
   let outdatedReason: string | null = null;
   if (route.state.status === 'ok') {
-    if (flood.version !== route.state.floodVersion) outdatedReason = 'dữ liệu vùng ngập đã thay đổi kể từ lúc tính.';
-    else if (!online || flood.noRecentPoll || flood.expired || !flood.data?.routing_data_sufficient) {
-      outdatedReason = 'dữ liệu vùng ngập hiện không còn đủ mới và hợp lệ.';
+    if (!isWithinGracePeriod) {
+      if (flood.version !== route.state.floodVersion) {
+        outdatedReason = 'dữ liệu vùng ngập đã thay đổi kể từ lúc tính.';
+      } else if (!online || flood.noRecentPoll || flood.expired || !flood.data?.routing_data_sufficient) {
+        outdatedReason = 'dữ liệu vùng ngập hiện không còn đủ mới và hợp lệ.';
+      }
     }
   }
 
@@ -222,10 +260,10 @@ function Dashboard({
           <nav className="nav-links">
             <Link to="/demo" style={{ fontWeight: 600 }}>{t('navDemo')} →</Link>
             <Link to="/stations">{t('navStations')}</Link>
-            <Link to="/forecast">Dự báo NYC (Thử nghiệm)</Link>
             <Link to="/admin">{t('navAdmin')}</Link>
           </nav>
         </header>
+
         <section className="panel">
           <label>
             {t('dataSource')}{' '}
@@ -304,6 +342,9 @@ function Dashboard({
           onClearHistory={route.clearHistory}
           history={route.history}
           state={route.state}
+          routes={allRoutes}
+          selectedRouteIndex={selectedRouteIndex}
+          onSelectRoute={route.selectRoute}
           online={online}
           outdatedReason={outdatedReason}
         />
@@ -327,6 +368,9 @@ function Dashboard({
           origin={origin}
           destination={destination}
           routePath={routePath}
+          allRoutes={allMapRoutes}
+          selectedRouteIndex={selectedRouteIndex}
+          onSelectRoute={route.selectRoute}
           routeOutdated={outdatedReason !== null}
           pickMode={pickMode}
           selectedId={selectedId}

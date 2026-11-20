@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { FeatureCollection } from 'geojson';
 import type { RouteState } from '../hooks/useSafeRoute';
 import { useI18n } from '../i18n';
-import type { LatLng, RouteHistoryItem, SourceSelection, VehicleType } from '../types';
+import type { LatLng, RouteHistoryItem, RouteOption, SourceSelection, VehicleType } from '../types';
 import { formatCoord, formatDistance, formatDuration, formatTime } from '../utils/format';
 import AddressSearch from './AddressSearch';
 import type { PickMode } from './MapView';
@@ -25,6 +25,9 @@ interface Props {
   onClearHistory: () => void;
   history: RouteHistoryItem[];
   state: RouteState;
+  routes?: RouteOption[];
+  selectedRouteIndex?: number;
+  onSelectRoute?: (index: number) => void;
   online: boolean;
   outdatedReason: string | null;
 }
@@ -37,6 +40,12 @@ export default function RoutePanel(p: Props) {
   const loading = p.state.status === 'loading';
   const canCompute = !!p.origin && !!p.destination && !loading && p.online;
   const r = p.state.result;
+  const selectedIdx = p.selectedRouteIndex ?? 0;
+  const activeRoute = (p.routes && p.routes[selectedIdx]) || r;
+  const activeDistance = activeRoute?.distance_m ?? r?.distance_m;
+  const activeDuration = activeRoute?.duration_s ?? r?.duration_s;
+  const activeSteps = activeRoute?.steps ?? r?.steps;
+  const activeRouteGeom = activeRoute?.route ?? r?.route;
 
   const shareRoute = async () => {
     if (!p.origin || !p.destination) return;
@@ -58,17 +67,17 @@ export default function RoutePanel(p: Props) {
   };
 
   const exportGeoJson = () => {
-    if (!r) return;
+    if (!r || !activeRouteGeom) return;
     const features = [
       {
-        ...r.route,
+        ...activeRouteGeom,
         properties: {
-          ...r.route.properties,
+          ...activeRouteGeom.properties,
           kind: 'safe_route',
           vehicle: p.vehicle,
           engine: r.engine ?? 'valhalla',
-          distance_m: r.distance_m,
-          duration_s: r.duration_s,
+          distance_m: activeDistance,
+          duration_s: activeDuration,
           calculated_at: r.calculated_at,
         },
       },
@@ -175,9 +184,51 @@ export default function RoutePanel(p: Props) {
               Tuyến này có thể đã lỗi thời: {p.outdatedReason} Hãy bấm “Tính lại tuyến”.
             </p>
           )}
+
+          {p.routes && p.routes.length > 1 && (
+            <div className="route-cards-list" role="radiogroup" aria-label="Tùy chọn tuyến đường">
+              <div className="route-cards-title">
+                {p.routes.length} phương án di chuyển (Bấm để chọn):
+              </div>
+              <div className="route-cards-grid">
+                {p.routes.map((rt, idx) => {
+                  const isSelected = idx === selectedIdx;
+                  const diffDist = rt.distance_m - p.routes![0].distance_m;
+                  const diffDur = rt.duration_s - p.routes![0].duration_s;
+                  return (
+                    <button
+                      key={rt.id}
+                      type="button"
+                      className={`route-card-item ${isSelected ? 'active' : ''}`}
+                      onClick={() => p.onSelectRoute?.(idx)}
+                      role="radio"
+                      aria-checked={isSelected}
+                    >
+                      <div className="route-card-top">
+                        <span className={`route-card-badge ${idx === 0 ? 'badge-primary' : 'badge-alt'}`}>
+                          {idx === 0 ? 'Tuyến 1 (Tối ưu)' : `Tuyến ${idx + 1}`}
+                        </span>
+                        <strong className="route-card-time">{formatDuration(rt.duration_s)}</strong>
+                      </div>
+                      <div className="route-card-bottom">
+                        <span className="route-card-dist">{formatDistance(rt.distance_m)}</span>
+                        {idx > 0 && (
+                          <span className="route-card-diff">
+                            {diffDur === 0 ? 'Cùng thời gian' : diffDur > 0 ? `+${formatDuration(diffDur)}` : formatDuration(diffDur)}
+                            {diffDist !== 0 ? ` (${diffDist > 0 ? '+' : ''}${formatDistance(diffDist)})` : ''}
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           <dl>
-            <div><dt>{t('distance')}</dt><dd>{formatDistance(r.distance_m)}</dd></div>
-            <div><dt>{t('duration')}</dt><dd>{formatDuration(r.duration_s)}</dd></div>
+            <div><dt>{t('distance')}</dt><dd>{formatDistance(activeDistance)}</dd></div>
+            <div><dt>{t('duration')}</dt><dd>{formatDuration(activeDuration)}</dd></div>
           </dl>
           <p className="sub">
             {t('calculatedAt')} {formatTime(r.calculated_at)}
@@ -193,15 +244,15 @@ export default function RoutePanel(p: Props) {
             </button>
           </div>
 
-          {r.steps && r.steps.length > 0 && (
+          {activeSteps && activeSteps.length > 0 && (
             <div className="collapsible-block">
               <button type="button" className="collapse-toggle" onClick={() => setShowSteps(!showSteps)}>
-                <span>{t('stepsTitle')} ({r.steps.length})</span>
+                <span>{t('stepsTitle')} ({activeSteps.length})</span>
                 <span>{showSteps ? '▲' : '▼'}</span>
               </button>
               {showSteps && (
                 <ol className="turn-steps">
-                  {r.steps.map((st, idx) => (
+                  {activeSteps.map((st, idx) => (
                     <li key={`${idx}-${st.type}`}>
                       <span className="step-instr">{st.instruction}</span>
                       <span className="step-meta">{formatDistance(st.distance_m)}</span>

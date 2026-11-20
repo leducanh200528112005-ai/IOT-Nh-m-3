@@ -219,7 +219,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 except Exception as exc:
                     logger.warning("SSE stream read error: %s", exc)
                     yield ": retry\n\n"
-                await asyncio.sleep(3.0)
+                await asyncio.sleep(1.0)
 
         return StreamingResponse(event_gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
 

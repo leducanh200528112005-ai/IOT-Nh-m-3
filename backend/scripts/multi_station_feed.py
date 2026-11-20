@@ -53,6 +53,26 @@ STATION_PROFILES = {
         "base_depth": 5.2,
         "rssi": -71,
         "seq": 410
+    },
+    "station-04": {
+        "name": "Trạm 4 (Khuất Duy Tiến - Nguyễn Trãi)",
+        "ip": "10.155.201.195",
+        "mac": "24:6F:28:E5:A2:33",
+        "lat": 20.9925,
+        "lon": 105.7995,
+        "base_depth": 14.5,
+        "rssi": -65,
+        "seq": 500
+    },
+    "station-05": {
+        "name": "Trạm 5 (Lê Văn Lương - Hoàng Đạo Thúy)",
+        "ip": "10.155.201.198",
+        "mac": "24:6F:28:F7:B6:88",
+        "lat": 21.0068,
+        "lon": 105.8034,
+        "base_depth": 21.8,
+        "rssi": -62,
+        "seq": 520
     }
 }
 
@@ -92,6 +112,7 @@ def main():
     else:
         logger.info("Multi-station feeder connected to Mosquitto MQTT broker (feeding all 3 stations)!")
 
+    session_id = int(time.time()) % 1000000
     t_step = 0
     try:
         while True:
@@ -118,7 +139,7 @@ def main():
                 # Publish payload to MQTT
                 payload = json.dumps({
                     "device_id": st_id,
-                    "boot_id": f"esp32-{prof['mac'].replace(':', '')[-4:]}",
+                    "boot_id": f"sim-{prof['mac'].replace(':', '')[-4:]}-{session_id}",
                     "seq": prof["seq"],
                     "measured_at": now_iso,
                     "water_depth_cm": depth,

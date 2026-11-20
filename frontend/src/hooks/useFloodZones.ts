@@ -22,6 +22,7 @@ export function useFloodZones(selection: SourceSelection, refreshKey = 0) {
     let timer: number | undefined;
     let sse: EventSource | null = null;
     let sseConnected = false;
+    let lastSseAt = 0;
     const ctrl = new AbortController();
     setData(null);
     setError(null);
@@ -39,6 +40,7 @@ export function useFloodZones(selection: SourceSelection, refreshKey = 0) {
           if (stopped) return;
           try {
             const parsed = JSON.parse(event.data) as FloodZonesResponse;
+            lastSseAt = Date.now();
             setData(parsed);
             setError(null);
             setLastOkAt(Date.now());
@@ -56,6 +58,14 @@ export function useFloodZones(selection: SourceSelection, refreshKey = 0) {
     }
 
     const tick = async () => {
+      // Khi luồng SSE đang nhận dữ liệu đều đặn (trong vòng 6s gần nhất), không gọi HTTP fetch thủ công để tránh giật nhịp hiển thị
+      if (sseConnected && Date.now() - lastSseAt < 6000) {
+        if (!stopped) {
+          timer = window.setTimeout(tick, POLL_INTERVAL_MS);
+        }
+        return;
+      }
+
       try {
         const d = await fetchFloodZones(selection, ctrl.signal);
         if (stopped) return;
@@ -68,8 +78,7 @@ export function useFloodZones(selection: SourceSelection, refreshKey = 0) {
       } finally {
         if (!stopped) {
           setLoading(false);
-          // When SSE stream is healthy, keep a slower heartbeat poll so timestamps stay fresh without load.
-          timer = window.setTimeout(tick, sseConnected ? POLL_INTERVAL_MS * 2 : POLL_INTERVAL_MS);
+          timer = window.setTimeout(tick, POLL_INTERVAL_MS);
         }
       }
     };

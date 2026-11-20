@@ -4,10 +4,18 @@ import { divIcon, type LatLngTuple, type Marker as LeafletMarker } from 'leaflet
 import type { FeatureCollection } from 'geojson';
 import { MAP_CENTER, MAP_ZOOM, TILE_ATTRIBUTION, TILE_URL } from '../config';
 import type { LatLng, Station } from '../types';
-import { formatTime } from '../utils/format';
+import { formatDistance, formatDuration, formatTime } from '../utils/format';
 import { LEVEL_INFO, QUALITY_LABEL, displayLevel } from '../utils/status';
 
 export type PickMode = 'origin' | 'destination' | 'demo' | null;
+
+export interface MapRouteItem {
+  id: number;
+  path: LatLngTuple[];
+  distance_m: number;
+  duration_s: number;
+  is_primary?: boolean;
+}
 
 function escapeHtml(text: string): string {
   return text
@@ -25,6 +33,9 @@ interface Props {
   origin: LatLng | null;
   destination: LatLng | null;
   routePath: LatLngTuple[] | null;
+  allRoutes?: MapRouteItem[];
+  selectedRouteIndex?: number;
+  onSelectRoute?: (index: number) => void;
   routeOutdated: boolean;
   pickMode: PickMode;
   selectedId: string | null;
@@ -88,15 +99,49 @@ export default function MapView(p: Props) {
         />
       )}
 
+      {p.allRoutes && p.allRoutes.length > 1 && p.allRoutes.map((rt, idx) => {
+        if (idx === (p.selectedRouteIndex ?? 0)) return null;
+        return (
+          <Polyline
+            key={`alt-route-${rt.id}`}
+            positions={rt.path}
+            pathOptions={{
+              color: '#64748b',
+              weight: 6,
+              opacity: 0.85,
+            }}
+            eventHandlers={{
+              click: () => p.onSelectRoute?.(idx),
+              mouseover: (e) => {
+                e.target.setStyle({ color: '#334155', weight: 8, opacity: 1.0 });
+              },
+              mouseout: (e) => {
+                e.target.setStyle({ color: '#64748b', weight: 6, opacity: 0.85 });
+              },
+            }}
+          >
+            <Tooltip sticky>
+              {`Tuyến ${idx + 1}: ${formatDistance(rt.distance_m)} · ${formatDuration(rt.duration_s)} (Bấm để chọn)`}
+            </Tooltip>
+          </Polyline>
+        );
+      })}
+
       {p.routePath && (
         <Polyline
           positions={p.routePath}
           pathOptions={
             p.routeOutdated
-              ? { color: '#8a949e', weight: 6, opacity: 0.8, dashArray: '10 8' }
-              : { color: '#0b6b8a', weight: 6, opacity: 0.9 }
+              ? { color: '#8a949e', weight: 8, opacity: 0.85, dashArray: '10 8' }
+              : { color: '#0284c7', weight: 8, opacity: 1.0 }
           }
-        />
+        >
+          {p.allRoutes && p.allRoutes.length > 1 && (
+            <Tooltip sticky>
+              {(p.selectedRouteIndex ?? 0) === 0 ? 'Tuyến 1 (Tối ưu nhất - Đang chọn)' : `Tuyến ${(p.selectedRouteIndex ?? 0) + 1} (Đang chọn)`}
+            </Tooltip>
+          )}
+        </Polyline>
       )}
 
       {p.stations.map((s) => {

@@ -16,7 +16,7 @@ Hạ tầng, backend và frontend đã được khởi tạo. Backend có API tr
 Cần Python 3.12. Khởi chạy hạ tầng ở các bước dưới trước, rồi:
 
 ```powershell
-cd D:\CODE\IOT\backend
+cd D:\iot\IOT-Nh-m-3\backend
 powershell -ExecutionPolicy Bypass -File .\setup.ps1
 .\.venv\Scripts\python.exe -m alembic upgrade head
 .\.venv\Scripts\python.exe scripts\seed.py
@@ -32,7 +32,7 @@ Mở <http://localhost:8000/docs> để thử API. Máy hiện tại đã cài m
 Mở terminal riêng:
 
 ```powershell
-cd D:\CODE\IOT\frontend
+cd D:\iot\IOT-Nh-m-3\frontend
 npm install
 npm run dev
 ```
@@ -69,7 +69,7 @@ docker compose version
 Mở PowerShell và chạy:
 
 ```powershell
-cd D:\CODE\IOT\infra
+cd D:\iot\IOT-Nh-m-3\infra
 powershell -ExecutionPolicy Bypass -File .\setup.ps1
 docker compose up -d --wait
 docker compose ps
@@ -89,7 +89,7 @@ Kết quả mong đợi:
 Mở Docker Desktop trước, sau đó:
 
 ```powershell
-cd D:\CODE\IOT\infra
+cd D:\iot\IOT-Nh-m-3\infra
 docker compose up -d --wait
 docker compose ps
 ```
@@ -111,7 +111,7 @@ Nhấn `Ctrl+C` để thoát theo dõi log; container vẫn tiếp tục chạy.
 Nếu muốn giữ PowerShell tại thư mục gốc dự án, có thể dùng:
 
 ```powershell
-cd D:\CODE\IOT
+cd D:\iot\IOT-Nh-m-3
 docker compose --env-file .\infra\.env -f .\infra\compose.yaml up -d --wait
 docker compose --env-file .\infra\.env -f .\infra\compose.yaml ps
 ```
@@ -155,7 +155,7 @@ Nếu backend sau này cũng chạy trong cùng Docker Compose, dùng host `post
 
 ## 6. Dừng và khởi động lại
 
-Chạy các lệnh sau tại `D:\CODE\IOT\infra`.
+Chạy các lệnh sau tại `D:\iot\IOT-Nh-m-3\infra`.
 
 Dừng container, giữ dữ liệu:
 

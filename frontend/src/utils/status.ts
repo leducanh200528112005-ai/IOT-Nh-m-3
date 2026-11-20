@@ -20,11 +20,16 @@ export function displayLevel(s: Station): FloodLevel {
   return s.data_quality !== 'fresh' || !(s.hazard_state in LEVEL_INFO) ? 'unknown' : s.hazard_state;
 }
 
-/** Mã phiên bản dữ liệu vùng ngập, dùng để biết tuyến đang hiển thị có còn khớp không. */
+/** Mã phiên bản dữ liệu vùng ngập, dùng để biết tuyến đang hiển thị có còn khớp không.
+ * Chỉ theo dõi trạng thái cảnh báo và vùng cấm địa lý thực sự, bỏ qua dao động mực nước nhỏ để tránh làm tuyến bị lỗi thời giả. */
 export function floodVersion(d: FloodZonesResponse): string {
-  const s = `${d.source}:${d.include_real}|` + d.stations.map((x) => `${x.source}:${x.id}:${x.latitude}:${x.longitude}:${x.hazard_state}:${x.data_quality}:${x.water_depth_cm}`).join('|');
-  const z = JSON.stringify(d.flood_zones);
+  const s = `${d.source}:${d.include_real}|` +
+    d.stations.map((x) => `${x.source ?? ''}:${x.id}:${x.hazard_state}:${x.data_quality}`).join('|');
+  const zones = (d.flood_zones?.features ?? []).map((f) => {
+    const props = f.properties as Record<string, unknown> | undefined;
+    return `${props?.station_id ?? ''}:${props?.radius_m ?? ''}:${props?.is_predicted ? '1' : '0'}`;
+  }).sort().join(';');
   let h = 0;
-  for (const ch of s + z) h = (h * 31 + ch.charCodeAt(0)) | 0;
+  for (const ch of s + '|' + zones) h = (h * 31 + ch.charCodeAt(0)) | 0;
   return String(h);
 }

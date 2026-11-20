@@ -374,7 +374,9 @@ def _prune_osrm_backtracks(
     return line, dist, dur, merged_steps
 
 
-def _parse_osrm_response(resp: httpx.Response, vehicle: str, settings: Any, lang: str) -> list[tuple[LineString, float, float, list[dict]]]:
+def _parse_osrm_response(
+    resp: httpx.Response, vehicle: str, settings: Any, lang: str, *, prune_backtracks: bool = True,
+) -> list[tuple[LineString, float, float, list[dict]]]:
     if resp.status_code != 200:
         logger.warning("OSRM returned HTTP %s", resp.status_code)
         return []
@@ -413,8 +415,10 @@ def _parse_osrm_response(resp: httpx.Response, vehicle: str, settings: Any, lang
                     "name": str(st.get("name", "")),
                     "location": st.get("maneuver", {}).get("location", [0, 0]),
                 })
-        line, clean_dist, clean_dur, clean_steps = _prune_osrm_backtracks(coords, steps, dur_ratio)
-        routes.append((line, clean_dist, clean_dur, clean_steps))
+        if prune_backtracks:
+            routes.append(_prune_osrm_backtracks(coords, steps, dur_ratio))
+        else:
+            routes.append((LineString(coords), dist, dur, steps))
     return routes
 
 
@@ -493,7 +497,24 @@ def _finalize_route_response(
     engine: str,
     profile: str,
     extra_warnings: list[str] | None = None,
+    candidates: list[tuple[float, float, LineString, list[dict]]] | None = None,
 ) -> dict:
+    all_cands = list(candidates) if candidates else [(best_dist, best_dur, best_line, steps)]
+    all_cands.sort(key=lambda x: (x[1], x[0]))
+
+    distinct_candidates: list[tuple[float, float, LineString, list[dict]]] = []
+    for c in all_cands:
+        dist, dur, line, c_steps = c
+        if any(abs(dist - dc[0]) < 35.0 for dc in distinct_candidates):
+            continue
+        distinct_candidates.append(c)
+        if len(distinct_candidates) >= 3:
+            break
+
+    if not distinct_candidates:
+        distinct_candidates = [(best_dist, best_dur, best_line, steps)]
+
+    best_dist, best_dur, best_line, steps = distinct_candidates[0]
     coordinates = list(best_line.coords)
     offsets = [
         abs(_GEOD.inv(*point.coordinates(), *snapped)[2])
@@ -534,10 +555,22 @@ def _finalize_route_response(
     else:
         warnings.append("Khoảng cách/thời gian chỉ tính phần tuyến trên đường; đoạn nối từ điểm chọn chưa được xác minh có thể đi được.")
 
+    route_options = []
+    for idx, (dist, dur, line, c_steps) in enumerate(distinct_candidates):
+        route_options.append({
+            "id": idx,
+            "route": {"type": "Feature", "geometry": mapping(line), "properties": {}},
+            "distance_m": round(dist, 1),
+            "duration_s": round(dur, 1),
+            "steps": c_steps,
+            "is_primary": (idx == 0),
+            "summary": "Tuyến tối ưu nhất" if idx == 0 else f"Tuyến đề xuất {idx + 1}",
+        })
+
     return {
         "route": {"type": "Feature", "geometry": mapping(best_line), "properties": {}},
-        "distance_m": best_dist,
-        "duration_s": best_dur,
+        "distance_m": round(best_dist, 1),
+        "duration_s": round(best_dur, 1),
         "calculated_at": datetime.now(timezone.utc),
         "data_generated_at": current_snapshot["generated_at"],
         "profile": profile,
@@ -547,6 +580,7 @@ def _finalize_route_response(
         "include_real": request.include_real,
         "warnings": warnings,
         "steps": steps,
+        "routes": route_options,
     }
 
 
@@ -564,14 +598,17 @@ def _select_non_intersecting(
     return candidates
 
 
-def query_osrm(points: list[list[float]], client: httpx.Client, settings: Any, vehicle: str = "car", lang: str = "vi"):
+def query_osrm(
+    points: list[list[float]], client: httpx.Client, settings: Any, vehicle: str = "car",
+    lang: str = "vi", *, prune_backtracks: bool = True,
+):
     base = getattr(settings, "osrm_base_url", "https://router.project-osrm.org").rstrip("/")
     timeout = getattr(settings, "osrm_timeout_seconds", 3.0)
     coords_str = ";".join(f"{p[0]:.6f},{p[1]:.6f}" for p in points)
     url = f"{base}/route/v1/driving/{coords_str}?overview=full&geometries=geojson&alternatives=true&steps=true"
     try:
         resp = client.get(url, timeout=timeout)
-        return _parse_osrm_response(resp, vehicle, settings, lang)
+        return _parse_osrm_response(resp, vehicle, settings, lang, prune_backtracks=prune_backtracks)
     except (httpx.RequestError, ValueError, KeyError, IndexError, TypeError) as exc:
         logger.warning("OSRM query failed: %s", exc)
         return []
@@ -600,7 +637,10 @@ def _verify_against_fresh_snapshot(request: RouteRequest, best_line: LineString,
     return current
 
 
-def find_route_osrm(request: RouteRequest, settings, get_snapshot, client: httpx.Client) -> dict:
+def find_route_osrm(
+    request: RouteRequest, settings, get_snapshot, client: httpx.Client, *,
+    use_waypoints: bool = True, prune_backtracks: bool = True,
+) -> dict:
     data = get_snapshot()
     vehicle = getattr(request, "vehicle", "car")
     lang = getattr(request, "lang", "vi")
@@ -611,24 +651,29 @@ def find_route_osrm(request: RouteRequest, settings, get_snapshot, client: httpx
     end_pt = request.end.coordinates()
     logger.info("OSRM fallback routing %s: %s -> %s", vehicle, start_pt, end_pt)
 
-    direct = query_osrm([start_pt, end_pt], client, settings, vehicle=vehicle, lang=lang)
+    options = {} if prune_backtracks else {"prune_backtracks": False}
+    direct = query_osrm([start_pt, end_pt], client, settings, vehicle=vehicle, lang=lang, **options)
     candidates = _select_non_intersecting(direct, start_pt, end_pt, zones)
-    if not candidates and not zones.is_empty:
+    if use_waypoints and len(candidates) < 3 and not zones.is_empty:
         for wp in _build_osrm_detour_waypoints(start_pt, end_pt, zones):
-            detour = query_osrm([start_pt, wp, end_pt], client, settings, vehicle=vehicle, lang=lang)
-            candidates = _select_non_intersecting(detour, start_pt, end_pt, zones)
-            if candidates:
+            detour = query_osrm([start_pt, wp, end_pt], client, settings, vehicle=vehicle, lang=lang, **options)
+            detour_cands = _select_non_intersecting(detour, start_pt, end_pt, zones)
+            for dc in detour_cands:
+                if not any(abs(dc[0] - c[0]) < 40.0 for c in candidates):
+                    candidates.append(dc)
+            if len(candidates) >= 3:
                 break
 
     if not candidates:
         raise RoutingError("NO_SUITABLE_ROUTE", "Không tìm được tuyến tránh vùng cấm phù hợp với tình hình ngập hiện tại.")
 
-    candidates.sort(key=lambda x: x[0])
+    candidates.sort(key=lambda x: (x[1], x[0]))
     best_dist, best_dur, best_line, steps = candidates[0]
     current = _verify_against_fresh_snapshot(request, best_line, settings, get_snapshot())
     return _finalize_route_response(
         request=request, best_line=best_line, best_dist=best_dist, best_dur=best_dur, steps=steps,
         current_snapshot=current, engine="osrm", profile="driving-car" if vehicle == "car" else vehicle,
+        candidates=candidates,
     )
 
 
@@ -645,22 +690,26 @@ async def async_find_route_osrm(request: RouteRequest, settings, get_snapshot, c
 
     direct = await async_query_osrm([start_pt, end_pt], client, settings, vehicle=vehicle, lang=lang)
     candidates = _select_non_intersecting(direct, start_pt, end_pt, zones)
-    if not candidates and not zones.is_empty:
+    if len(candidates) < 3 and not zones.is_empty:
         for wp in _build_osrm_detour_waypoints(start_pt, end_pt, zones):
             detour = await async_query_osrm([start_pt, wp, end_pt], client, settings, vehicle=vehicle, lang=lang)
-            candidates = _select_non_intersecting(detour, start_pt, end_pt, zones)
-            if candidates:
+            detour_cands = _select_non_intersecting(detour, start_pt, end_pt, zones)
+            for dc in detour_cands:
+                if not any(abs(dc[0] - c[0]) < 40.0 for c in candidates):
+                    candidates.append(dc)
+            if len(candidates) >= 3:
                 break
 
     if not candidates:
         raise RoutingError("NO_SUITABLE_ROUTE", "Không tìm được tuyến tránh vùng cấm phù hợp với tình hình ngập hiện tại.")
 
-    candidates.sort(key=lambda x: x[0])
+    candidates.sort(key=lambda x: (x[1], x[0]))
     best_dist, best_dur, best_line, steps = candidates[0]
     current = _verify_against_fresh_snapshot(request, best_line, settings, await anyio.to_thread.run_sync(get_snapshot))
     return _finalize_route_response(
         request=request, best_line=best_line, best_dist=best_dist, best_dur=best_dur, steps=steps,
         current_snapshot=current, engine="osrm", profile="driving-car" if vehicle == "car" else vehicle,
+        candidates=candidates,
     )
 
 
@@ -691,12 +740,14 @@ def find_route_valhalla(request: RouteRequest, settings, get_snapshot, client: h
         return find_route_osrm(request, settings, get_snapshot, client)
 
     candidates = _select_non_intersecting(trips, start_pt, end_pt, zones)
-    if not candidates and features:
+    if len(candidates) < 3 and features:
         corridor = trips[0][0] if trips else LineString([start_pt, end_pt])
         kept = _corridor_feature_subset(features, corridor, base_scale)
         try:
             trips2 = query(kept, force_full=True)
-            candidates = _select_non_intersecting(trips2, start_pt, end_pt, zones)
+            for item in _select_non_intersecting(trips2, start_pt, end_pt, zones):
+                if not any(abs(item[0] - c[0]) < 30.0 for c in candidates):
+                    candidates.append(item)
         except (httpx.RequestError, ValueError, KeyError, IndexError, TypeError) as exc:
             logger.warning("Valhalla corridor retry failed: %s", exc)
 
@@ -704,12 +755,13 @@ def find_route_valhalla(request: RouteRequest, settings, get_snapshot, client: h
         logger.info("Valhalla found no valid detour, falling back to OSRM.")
         return find_route_osrm(request, settings, get_snapshot, client)
 
-    candidates.sort(key=lambda x: x[0])
+    candidates.sort(key=lambda x: (x[1], x[0]))
     best_dist, best_dur, best_line, steps = candidates[0]
     current = _verify_against_fresh_snapshot(request, best_line, settings, get_snapshot())
     return _finalize_route_response(
         request=request, best_line=best_line, best_dist=best_dist, best_dur=best_dur, steps=steps,
         current_snapshot=current, engine="valhalla", profile="driving-car" if vehicle == "car" else vehicle,
+        candidates=candidates,
     )
 
 
@@ -740,12 +792,14 @@ async def async_find_route_valhalla(request: RouteRequest, settings, get_snapsho
         return await async_find_route_osrm(request, settings, get_snapshot, client)
 
     candidates = _select_non_intersecting(trips, start_pt, end_pt, zones)
-    if not candidates and features:
+    if len(candidates) < 3 and features:
         corridor = trips[0][0] if trips else LineString([start_pt, end_pt])
         kept = _corridor_feature_subset(features, corridor, base_scale)
         try:
             trips2 = await query(kept, force_full=True)
-            candidates = _select_non_intersecting(trips2, start_pt, end_pt, zones)
+            for item in _select_non_intersecting(trips2, start_pt, end_pt, zones):
+                if not any(abs(item[0] - c[0]) < 30.0 for c in candidates):
+                    candidates.append(item)
         except (httpx.RequestError, ValueError, KeyError, IndexError, TypeError) as exc:
             logger.warning("Async Valhalla corridor retry failed: %s", exc)
 
@@ -753,12 +807,13 @@ async def async_find_route_valhalla(request: RouteRequest, settings, get_snapsho
         logger.info("Async Valhalla found no valid detour, falling back to OSRM.")
         return await async_find_route_osrm(request, settings, get_snapshot, client)
 
-    candidates.sort(key=lambda x: x[0])
+    candidates.sort(key=lambda x: (x[1], x[0]))
     best_dist, best_dur, best_line, steps = candidates[0]
     current = _verify_against_fresh_snapshot(request, best_line, settings, await anyio.to_thread.run_sync(get_snapshot))
     return _finalize_route_response(
         request=request, best_line=best_line, best_dist=best_dist, best_dur=best_dur, steps=steps,
         current_snapshot=current, engine="valhalla", profile="driving-car" if vehicle == "car" else vehicle,
+        candidates=candidates,
     )
 
 

@@ -88,6 +88,7 @@ def main():
             mqtt_client = None
 
     seq = 0
+    session_boot_ts = int(time.time()) % 100000
     dev_id = "station-01"
     
     # Regex patterns to parse ESP32 outputs
@@ -146,7 +147,7 @@ def main():
                     if mqtt_client and mqtt_client.is_connected():
                         payload = json.dumps({
                             "device_id": dev_id,
-                            "boot_id": "usb-bridge",
+                            "boot_id": f"usb-{session_boot_ts}",
                             "seq": seq,
                             "measured_at": datetime.now(timezone.utc).isoformat(),
                             "water_depth_cm": round(water_depth, 2),

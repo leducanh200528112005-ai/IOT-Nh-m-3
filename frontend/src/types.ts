@@ -66,6 +66,16 @@ export interface RouteStep {
   type: string;
 }
 
+export interface RouteOption {
+  id: number;
+  route: Feature<LineString>;
+  distance_m: number;
+  duration_s: number;
+  steps?: RouteStep[];
+  is_primary?: boolean;
+  summary?: string;
+}
+
 export interface RouteResponse {
   source: 'real' | 'demo';
   include_real: boolean;
@@ -80,6 +90,7 @@ export interface RouteResponse {
   snap_distances_m: { start: number; end: number };
   warnings: string[];
   steps?: RouteStep[];
+  routes?: RouteOption[];
 }
 
 export interface RouteHistoryItem {

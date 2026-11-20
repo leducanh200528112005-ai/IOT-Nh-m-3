@@ -10,6 +10,8 @@ export interface RouteState {
   message?: string;
   /** Phiên bản dữ liệu ngập tại lúc người dùng bấm tính */
   floodVersion?: string | null;
+  /** Tuyến đang được chọn trong danh sách routes (mặc định 0) */
+  selectedRouteIndex?: number;
 }
 
 const ROUTE_CACHE_KEY = 'flood_last_route_cache_v1';
@@ -90,7 +92,7 @@ export function useSafeRoute(initialState?: RouteState) {
           ctrl.signal,
         );
         if (ctrl.signal.aborted) return;
-        const nextState: RouteState = { status: 'ok', result, floodVersion };
+        const nextState: RouteState = { status: 'ok', result, floodVersion, selectedRouteIndex: 0 };
         setState(nextState);
         try {
           const cache: CachedRouteEntry = { state: nextState, origin, destination, vehicle, selection };
@@ -131,11 +133,27 @@ export function useSafeRoute(initialState?: RouteState) {
     [],
   );
 
+  const selectRoute = useCallback((index: number) => {
+    setState((prev) => {
+      if (prev.status !== 'ok') return prev;
+      const next: RouteState = { ...prev, selectedRouteIndex: index };
+      try {
+        const raw = sessionStorage.getItem(ROUTE_CACHE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          parsed.state = next;
+          sessionStorage.setItem(ROUTE_CACHE_KEY, JSON.stringify(parsed));
+        }
+      } catch {}
+      return next;
+    });
+  }, []);
+
   const clear = useCallback(() => {
     ctrlRef.current?.abort();
     setState({ status: 'idle' });
     sessionStorage.removeItem(ROUTE_CACHE_KEY);
   }, []);
 
-  return { state, history, request, clear, clearHistory };
+  return { state, history, request, clear, clearHistory, selectRoute };
 }
