@@ -1,3 +1,4 @@
+import asyncio
 import copy
 from datetime import datetime, timezone
 from unittest.mock import Mock
@@ -9,7 +10,7 @@ from shapely.geometry import box, mapping
 
 from app.config import Settings
 from app.main import create_app
-from app.routing import RoutingError, find_route
+from app.routing import RoutingError, async_find_route, find_route
 from app.schemas import RouteRequest
 
 START, END = [106.69, 10.77], [106.71, 10.77]
@@ -49,6 +50,105 @@ def test_no_zones_omits_avoid_options():
     assert result["distance_m"] == 2500
     assert "options" not in client.post.call_args.kwargs["json"]
     assert client.post.call_args.kwargs["headers"] == {"Authorization": "test-key"}
+
+
+@pytest.mark.parametrize("config, expected", [
+    ({"ors_alternative_routes_enabled": False}, None),
+    ({"ors_alternative_target_count": 1}, None),
+    ({"ors_alternative_target_count": 2, "ors_alternative_weight_factor": 1.8, "ors_alternative_share_factor": 0.8},
+     {"target_count": 2, "weight_factor": 1.8, "share_factor": 0.8}),
+])
+def test_alternatives_can_be_configured(config, expected):
+    client = Mock(post=Mock(return_value=response(DETOUR)))
+    result = call(client, [data(True), data(True)], settings(**config))
+    sent = client.post.call_args.kwargs["json"]
+    assert sent.get("alternative_routes") == expected
+    assert "avoid_polygons" in sent["options"]
+    assert result["returned_route_count"] == 1
+
+
+def warning(station_id, geometry):
+    return {"type": "Feature", "geometry": mapping(geometry), "properties": {
+        "station_id": station_id, "name": station_id, "source": "demo", "water_depth_cm": 15,
+    }}
+
+
+def test_async_ranks_all_valid_ors_routes_using_latest_warning_zones():
+    initial, current = data(), data()
+    current["warning_zones"] = {"type": "FeatureCollection", "features": [
+        warning("w1", box(106.699, 10.7695, 106.701, 10.7705)),
+        warning("w2", box(106.700, 10.7695, 106.701, 10.7705)),
+    ]}
+    direct, detour = [response(coords).json()["features"][0] for coords in (DIRECT, DETOUR)]
+    detour["properties"]["summary"]["duration"] = 400
+    duplicate = response([START, [106.7, 10.77], END]).json()["features"][0]
+    too_far = response([[106.68, 10.77], END]).json()["features"][0]
+    payload = {"features": [{"geometry": None}, too_far, direct, detour, duplicate]}
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))) as client:
+            return await async_find_route(request(), settings(), Mock(side_effect=[initial, current]), client)
+
+    result = asyncio.run(run())
+
+    assert result["returned_route_count"] == 2
+    first, second = result["routes"]
+    assert first["assessment"]["warning_exposure_m"] == 0
+    assert first["assessment"]["nearest_warning_zone_distance_m"] > 0
+    assert second["assessment"]["warning_zone_count"] == 2
+    assert second["assessment"]["nearest_warning_zone_distance_m"] == 0
+    assert second["assessment"]["warning_exposure_m"] == pytest.approx(219, abs=2)
+    assert first["duration_s"] > second["duration_s"]
+    assert result["recommended_route_id"] == first["id"]
+    assert result["route"] == first["route"]
+
+
+@pytest.mark.parametrize("extra_seconds, farther_offset, close_limit, expect_farther", [
+    (20, 0.0003, 50, True),
+    (60, 0.0003, 50, True),
+    (90, 0.0003, 50, False),
+    (20, 0.0006, 5, False),  # Both clearances exceed the capped ranking distance.
+    (20, 0.0003, 0, False),  # Disable proximity ranking without hiding measurements.
+])
+def test_warning_clearance_ranks_only_within_eta_window_and_cap(
+    extra_seconds, farther_offset, close_limit, expect_farther,
+):
+    close = response().json()["features"][0]
+    farther = response([
+        START, [START[0], START[1] + farther_offset],
+        [END[0], END[1] + farther_offset], END,
+    ]).json()["features"][0]
+    farther["properties"]["summary"]["duration"] = 300 + extra_seconds
+    snapshot = data()
+    snapshot["warning_zones"] = {"features": [
+        warning("warning", box(106.699, 10.7698, 106.701, 10.7699)),
+    ]}
+    client = Mock(post=Mock(return_value=httpx.Response(200, json={"features": [close, farther]})))
+    result = call(client, [snapshot, snapshot], settings(
+        route_warning_proximity_limit_m=close_limit, route_warning_proximity_eta_tolerance_s=60,
+    ))
+    first, second = result["routes"]
+    assert first["assessment"]["warning_exposure_m"] == second["assessment"]["warning_exposure_m"] == 0
+    assert (first["assessment"]["nearest_warning_zone_distance_m"] >
+            second["assessment"]["nearest_warning_zone_distance_m"]) == expect_farther
+    assert first["duration_s"] == (300 + extra_seconds if expect_farther else 300)
+    assert result["ranking_parameters"]["warning_proximity_limit_m"] == close_limit
+    close_route = second if expect_farther else first
+    assert close_route["assessment"]["nearest_warning_zone_distance_m"] == pytest.approx(11.1, abs=0.2)
+
+
+def test_warning_clearance_is_unknown_without_warning_zones():
+    result = call(Mock(post=Mock(return_value=response())))
+    assert result["routes"][0]["assessment"]["nearest_warning_zone_distance_m"] is None
+
+
+def test_new_danger_filters_only_the_affected_candidate():
+    features = [response(coords).json()["features"][0] for coords in (DIRECT, DETOUR)]
+    client = Mock(post=Mock(return_value=httpx.Response(200, json={"features": features})))
+    result = call(client, [data(), data(True)])
+    assert result["returned_route_count"] == 1
+    assert result["route"]["geometry"]["coordinates"][1] == tuple(DETOUR[1])
+    assert client.post.call_count == 1
 
 
 def test_avoid_zones_and_validate_detour():
@@ -101,7 +201,8 @@ def test_endpoint_in_zone_skips_upstream():
     (403, {}, "ROUTING_UNAVAILABLE"), (500, {}, "ROUTING_UNAVAILABLE"),
     (404, {"error": {"code": 2009}}, "NO_SUITABLE_ROUTE"),
     (404, {"error": {"code": 2010}}, "NO_SUITABLE_ROUTE"),
-    (200, {"features": []}, "ROUTING_UNAVAILABLE"),
+    (200, {"features": []}, "NO_SUITABLE_ROUTE"),
+    (200, {"features": None}, "ROUTING_UNAVAILABLE"),
 ])
 def test_upstream_errors(status, body, code):
     with pytest.raises(RoutingError) as error:
@@ -198,11 +299,11 @@ def test_malformed_route(change):
 
 def test_actual_http_client_contract():
     def handler(upstream):
-        assert upstream.url.path == "/v2/directions/driving-car/geojson"
+        assert str(upstream.url) == "https://api.heigit.org/openrouteservice/v2/directions/driving-car/geojson"
         assert upstream.headers["Authorization"] == "test-key"
         return response()
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        assert call(client)["distance_m"] == 2500
+        assert call(client, config=settings(ors_base_url="https://api.heigit.org/openrouteservice"))["distance_m"] == 2500
 
 
 def test_endpoint_error_envelope_and_post_cors():

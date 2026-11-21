@@ -27,6 +27,8 @@ interface Props {
   state: RouteState;
   online: boolean;
   outdatedReason: string | null;
+  selectedRouteId?: string;
+  onSelectRoute: (id: string) => void;
 }
 
 export default function RoutePanel(p: Props) {
@@ -37,6 +39,8 @@ export default function RoutePanel(p: Props) {
   const loading = p.state.status === 'loading';
   const canCompute = !!p.origin && !!p.destination && !loading && p.online;
   const r = p.state.result;
+  const selected = r?.routes?.find((route) => route.id === p.selectedRouteId);
+  const active = selected ?? r;
 
   const shareRoute = async () => {
     if (!p.origin || !p.destination) return;
@@ -58,17 +62,17 @@ export default function RoutePanel(p: Props) {
   };
 
   const exportGeoJson = () => {
-    if (!r) return;
+    if (!r || !active) return;
     const features = [
       {
-        ...r.route,
+        ...active.route,
         properties: {
-          ...r.route.properties,
+          ...active.route.properties,
           kind: 'safe_route',
           vehicle: p.vehicle,
           engine: r.engine ?? 'valhalla',
-          distance_m: r.distance_m,
-          duration_s: r.duration_s,
+          distance_m: active.distance_m,
+          duration_s: active.duration_s,
           calculated_at: r.calculated_at,
         },
       },
@@ -168,17 +172,49 @@ export default function RoutePanel(p: Props) {
         </p>
       )}
 
-      {p.state.status === 'ok' && r && (
+      {p.state.status === 'ok' && r && active && (
         <div className="result">
           {p.outdatedReason && (
             <p className="msg warn" role="alert">
               Tuyến này có thể đã lỗi thời: {p.outdatedReason} Hãy bấm “Tính lại tuyến”.
             </p>
           )}
-          <dl>
-            <div><dt>{t('distance')}</dt><dd>{formatDistance(r.distance_m)}</dd></div>
-            <div><dt>{t('duration')}</dt><dd>{formatDuration(r.duration_s)}</dd></div>
-          </dl>
+          {r.routes?.length ? (
+            <div className="history-list" role="group" aria-label={t('routeCandidates')}>
+              <p className="sub">{t('routeCandidates')}: {r.routes.length}</p>
+              {r.routes.map((candidate) => (
+                <button key={candidate.id} type="button"
+                  className={`history-item route-candidate${candidate.id === selected?.id ? ' active' : ''}`}
+                  aria-pressed={candidate.id === selected?.id}
+                  onClick={() => p.onSelectRoute(candidate.id)}>
+                  <strong>{t('routeCandidate')} {candidate.rank}{candidate.id === r.recommended_route_id ? ` · ${t('routeRecommended')}` : ''}</strong>
+                  <span>{formatDuration(candidate.duration_s)} · {formatDistance(candidate.distance_m)}</span>
+                  <span>{t('routeWarningExposure')}: {formatDistance(candidate.assessment.warning_exposure_m)} · {t('routeWarningZones')}: {candidate.assessment.warning_zone_count}</span>
+                  {candidate.assessment.nearest_warning_zone_distance_m !== undefined && (
+                    <span>{t('routeWarningClearance')}: {candidate.assessment.nearest_warning_zone_distance_m === null
+                      ? t('routeNoWarningZones')
+                      : formatDistance(candidate.assessment.nearest_warning_zone_distance_m)}</span>
+                  )}
+                </button>
+              ))}
+              <p className="sub">{t('routeRankingPolicy')}</p>
+              {r.ranking_parameters && r.ranking_parameters.warning_proximity_limit_m > 0 && (
+                <p className="sub">{t('routeProximityPolicy')} ({r.ranking_parameters.warning_proximity_limit_m} m / {r.ranking_parameters.warning_proximity_eta_tolerance_s} s)</p>
+              )}
+              {!!selected?.assessment.warning_stations.length && (
+                <ul className="sub">
+                  {selected.assessment.warning_stations.map((station) => (
+                    <li key={`${station.source}:${station.station_id}`}>{station.name} · {station.water_depth_cm} cm</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : (
+            <dl>
+              <div><dt>{t('distance')}</dt><dd>{formatDistance(active.distance_m)}</dd></div>
+              <div><dt>{t('duration')}</dt><dd>{formatDuration(active.duration_s)}</dd></div>
+            </dl>
+          )}
           <p className="sub">
             {t('calculatedAt')} {formatTime(r.calculated_at)}
             {r.engine ? ` · ${r.engine.toUpperCase()}` : ''}
@@ -193,15 +229,15 @@ export default function RoutePanel(p: Props) {
             </button>
           </div>
 
-          {r.steps && r.steps.length > 0 && (
+          {active.steps && active.steps.length > 0 && (
             <div className="collapsible-block">
               <button type="button" className="collapse-toggle" onClick={() => setShowSteps(!showSteps)}>
-                <span>{t('stepsTitle')} ({r.steps.length})</span>
+                <span>{t('stepsTitle')} ({active.steps.length})</span>
                 <span>{showSteps ? '▲' : '▼'}</span>
               </button>
               {showSteps && (
                 <ol className="turn-steps">
-                  {r.steps.map((st, idx) => (
+                  {active.steps.map((st, idx) => (
                     <li key={`${idx}-${st.type}`}>
                       <span className="step-instr">{st.instruction}</span>
                       <span className="step-meta">{formatDistance(st.distance_m)}</span>

@@ -22,8 +22,11 @@ export function displayLevel(s: Station): FloodLevel {
 
 /** Mã phiên bản dữ liệu vùng ngập, dùng để biết tuyến đang hiển thị có còn khớp không. */
 export function floodVersion(d: FloodZonesResponse): string {
-  const s = `${d.source}:${d.include_real}|` + d.stations.map((x) => `${x.source}:${x.id}:${x.latitude}:${x.longitude}:${x.hazard_state}:${x.data_quality}:${x.water_depth_cm}`).join('|');
-  const z = JSON.stringify(d.flood_zones);
+  const s = JSON.stringify([d.source, d.include_real, d.stations.map((x) => [
+    x.source, x.id, x.latitude, x.longitude, x.hazard_state, x.data_quality, x.water_depth_cm,
+    x.exclusion_radius_m, x.warning_threshold_cm, x.danger_threshold_cm,
+  ])]);
+  const z = JSON.stringify([d.flood_zones, d.warning_zones]);
   let h = 0;
   for (const ch of s + z) h = (h * 31 + ch.charCodeAt(0)) | 0;
   return String(h);

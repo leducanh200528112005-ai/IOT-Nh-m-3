@@ -21,6 +21,7 @@ export default function Legend() {
         <li><span className="dot dashed" style={{ background: '#e3b505' }} />Viền đứt, mờ: dữ liệu cũ</li>
         <li><span className="dot dashed" style={{ background: '#8a949e' }} />Xám: dữ liệu cũ, lỗi hoặc thiếu; không rõ mức ngập</li>
         <li><span className="zone" />Vùng cấm đi qua</li>
+        <li><span className="dot" style={{ background: '#e3b505' }} />{t('routeWarningBuffer')}</li>
       </ul>
     </section>
   );

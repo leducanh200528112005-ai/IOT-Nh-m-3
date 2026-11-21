@@ -44,6 +44,22 @@ def test_demo_never_expires_and_does_not_query_real():
     assert data["flood_zones"]["features"][0]["properties"]["source"] == "demo"
 
 
+@pytest.mark.parametrize("depth, hazard, blocked, warned", [
+    (8, "normal", 0, 0), (15, "warning", 0, 1), (20, "danger", 1, 0),
+])
+def test_demo_warning_and_exclusion_zones_are_separate(depth, hazard, blocked, warned):
+    session = Mock()
+    station = point()
+    station.water_depth_cm = depth
+    session.scalars.return_value = [station]
+    data = selected_snapshot(session, settings(), "demo")
+    assert data["stations"][0]["hazard_state"] == hazard
+    assert len(data["flood_zones"]["features"]) == blocked
+    assert len(data["warning_zones"]["features"]) == warned
+    if warned:
+        assert data["warning_zones"]["features"][0]["properties"]["radius_m"] == station.exclusion_radius_m
+
+
 @pytest.mark.parametrize("quality,sufficient", [("fresh", True), ("stale", False), ("invalid", False), ("missing", False)])
 def test_combined_keeps_real_validation(quality, sufficient):
     session = Mock()

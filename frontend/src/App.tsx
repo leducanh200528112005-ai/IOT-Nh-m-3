@@ -15,7 +15,7 @@ import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { loadCachedRoute, useSafeRoute } from './hooks/useSafeRoute';
 import { useTheme } from './hooks/useTheme';
 import { useI18n } from './i18n';
-import type { LatLng, RouteHistoryItem, SourceSelection, Station, VehicleType } from './types';
+import type { LatLng, RouteHistoryItem, RouteResponse, SourceSelection, Station, VehicleType } from './types';
 import { lineToLatLngs } from './utils/geo';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; message: string }> {
@@ -150,8 +150,17 @@ function Dashboard({
     }
   }, [hasSharedRoute, flood.version, origin, destination, selection, vehicle, lang, route]);
 
-  const routeFeature = route.state.status === 'ok' ? route.state.result?.route : undefined;
+  const result = route.state.status === 'ok' ? route.state.result : undefined;
+  const [routeSelection, setRouteSelection] = useState<{ result: RouteResponse; id: string } | null>(null);
+  const routeId = routeSelection && routeSelection.result === result ? routeSelection.id : result?.recommended_route_id;
+  const routeFeature = result?.route;
   const routePath = useMemo(() => (routeFeature ? lineToLatLngs(routeFeature) : null), [routeFeature]);
+  const routePaths = useMemo(() => result?.routes?.map((item) => ({
+    id: item.id, path: lineToLatLngs(item.route),
+  })), [result?.routes]);
+  const selectRoute = (id: string) => {
+    if (result?.routes?.some((item) => item.id === id)) setRouteSelection({ result, id });
+  };
 
   // Cảnh báo tuyến lỗi thời; KHÔNG tự gọi lại backend mỗi lần poll.
   let outdatedReason: string | null = null;
@@ -263,6 +272,8 @@ function Dashboard({
         />
 
         <RoutePanel
+          selectedRouteId={routeId}
+          onSelectRoute={selectRoute}
           origin={origin}
           destination={destination}
           vehicle={vehicle}
@@ -327,6 +338,10 @@ function Dashboard({
           origin={origin}
           destination={destination}
           routePath={routePath}
+          routePaths={routePaths}
+          selectedRouteId={routeId}
+          onSelectRoute={selectRoute}
+          warningZones={flood.data?.warning_zones}
           routeOutdated={outdatedReason !== null}
           pickMode={pickMode}
           selectedId={selectedId}

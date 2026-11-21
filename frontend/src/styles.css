@@ -171,6 +171,7 @@ select { margin-left: 8px; padding: 5px; max-width: 100%; background: var(--card
 .history-item { width: 100%; text-align: left; padding: 6px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--card); color: var(--ink); display: flex; flex-direction: column; font-size: 12px; }
 .history-item:hover:not(:disabled) { border-color: var(--accent); background: var(--info-bg); }
 .history-item span { color: var(--muted); font-size: 11px; }
+.route-candidate.active { border-color: var(--accent); background: var(--info-bg); }
 
 /* Loading shimmer skeleton */
 .skeleton {

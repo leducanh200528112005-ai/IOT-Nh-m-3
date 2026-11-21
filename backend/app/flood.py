@@ -23,9 +23,16 @@ def circle(station) -> dict:
     return mapping(transform(Point(0, 0).buffer(station.exclusion_radius_m), to_geo.transform, interleaved=False))
 
 
+def warning_zone(point, source: str, depth_cm: float) -> dict:
+    return {"type": "Feature", "geometry": circle(point), "properties": {
+        "station_id": point.id, "name": point.name, "source": source,
+        "radius_m": point.exclusion_radius_m, "water_depth_cm": depth_cm,
+    }}
+
+
 def snapshot(session, stale_seconds: int) -> dict:
     now = datetime.now(timezone.utc)
-    stations, features = [], []
+    stations, features, warnings = [], [], []
     for station in session.scalars(select(Station).where(Station.is_active).order_by(Station.id)):
         # Timestamped messages are ordered by event time, not arrival time.
         # Unsynchronized messages use received_at, but cannot establish freshness.
@@ -72,6 +79,8 @@ def snapshot(session, stale_seconds: int) -> dict:
                 "warning_message": ai_info["warning_message"] if is_predicted and ai_info else None,
                 "predicted_15m": ai_info["predicted_15m"] if ai_info else None,
             }})
+        elif hazard == "warning":
+            warnings.append(warning_zone(station, "real", latest.water_depth_cm))
         stations.append({
             "id": station.id, "name": station.name, "source": "real",
             "latitude": station.latitude, "longitude": station.longitude,
@@ -79,8 +88,11 @@ def snapshot(session, stale_seconds: int) -> dict:
             "measured_at": latest.measured_at if latest else None,
             "received_at": latest.received_at if latest else None,
             "hazard_state": hazard, "data_quality": quality,
+            "warning_threshold_cm": station.warning_threshold_cm, "danger_threshold_cm": station.danger_threshold_cm,
+            "exclusion_radius_m": station.exclusion_radius_m,
             "ai_prediction": ai_info if latest and quality == "fresh" else None,
         })
     return {"generated_at": now, "stations": stations,
-            "flood_zones": {"type": "FeatureCollection", "features": features},
+             "flood_zones": {"type": "FeatureCollection", "features": features},
+             "warning_zones": {"type": "FeatureCollection", "features": warnings},
             "routing_data_sufficient": bool(stations) and all(s["data_quality"] == "fresh" for s in stations)}

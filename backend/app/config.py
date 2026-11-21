@@ -23,7 +23,13 @@ class Settings(BaseSettings):
     data_stale_seconds: int = Field(default=120, gt=0)
     cors_origins: list[str] = ["http://localhost:5173"]
     ors_api_key: SecretStr = SecretStr("")
-    ors_base_url: str = "https://api.openrouteservice.org"
+    ors_base_url: str = "https://api.heigit.org/openrouteservice"
+    ors_alternative_routes_enabled: bool = True
+    ors_alternative_target_count: int = Field(default=3, ge=1, le=3)
+    ors_alternative_weight_factor: float = Field(default=1.4, ge=1, allow_inf_nan=False)
+    ors_alternative_share_factor: float = Field(default=0.6, ge=0, le=1)
+    route_warning_proximity_limit_m: float = Field(default=50, ge=0, allow_inf_nan=False)
+    route_warning_proximity_eta_tolerance_s: float = Field(default=60, ge=0, allow_inf_nan=False)
     ors_timeout_seconds: float = Field(default=15, gt=0, le=60)
     ors_max_snap_m: float = Field(default=50, gt=0, le=500)
     ors_fallback_to_valhalla: bool = False

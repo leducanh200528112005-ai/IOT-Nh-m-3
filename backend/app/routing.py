@@ -1,5 +1,6 @@
 """Flood-aware routing across Valhalla, OSRM, and OpenRouteService with conservative validation."""
 from datetime import datetime, timezone
+from itertools import groupby
 import logging
 import math
 from typing import Any
@@ -15,6 +16,7 @@ from app.schemas import RouteRequest
 
 logger = logging.getLogger(__name__)
 _GEOD = Geod(ellps="WGS84")
+_Trip = tuple[LineString, float, float, list[dict]]
 
 _ORS_PROFILES = {
     "car": "driving-car",
@@ -94,7 +96,7 @@ def _validate_coords(coordinates: Any) -> LineString:
     return line
 
 
-def parse_route(response: httpx.Response):
+def parse_ors_routes(response: httpx.Response) -> list[_Trip]:
     if response.status_code == 429:
         raise RoutingError("ROUTING_RATE_LIMITED", "ORS đang giới hạn lượt gọi. Vui lòng thử lại sau.", 429)
     if response.status_code in (401, 403):
@@ -108,31 +110,48 @@ def parse_route(response: httpx.Response):
         if isinstance(error, dict) and error.get("code") in (2009, 2010):
             raise RoutingError("NO_SUITABLE_ROUTE", "Không tìm được tuyến hoặc điểm đường phù hợp.")
         raise RoutingError("ROUTING_UNAVAILABLE", "Dịch vụ định tuyến không xử lý được yêu cầu.", 502)
-    try:
-        feature = payload["features"][0]
-        geometry = feature["geometry"]
-        if geometry["type"] != "LineString":
+    features = payload.get("features") if isinstance(payload, dict) else None
+    if not isinstance(features, list):
+        raise RoutingError("ROUTING_UNAVAILABLE", "ORS trả dữ liệu không hợp lệ.", 502)
+    if not features:
+        raise RoutingError("NO_SUITABLE_ROUTE", "ORS không trả về tuyến phù hợp.")
+    trips = []
+    for feature in features:
+        try:
+            trips.append(_parse_ors_feature(feature))
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+    if not trips:
+        raise RoutingError("ROUTING_UNAVAILABLE", "ORS trả tuyến không hợp lệ.", 502)
+    return trips
+
+
+def _parse_ors_feature(feature: dict) -> _Trip:
+    geometry = feature["geometry"]
+    if geometry["type"] != "LineString":
+        raise ValueError()
+    line = _validate_coords(geometry["coordinates"])
+    summary = feature["properties"]["summary"]
+    distance, duration = summary["distance"], summary["duration"]
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0 for v in (distance, duration)):
+        raise ValueError()
+    if distance == 0:
+        raise ValueError()
+    steps = []
+    for segment in feature["properties"].get("segments", []):
+        if not isinstance(segment, dict):
             raise ValueError()
-        line = _validate_coords(geometry["coordinates"])
-        summary = feature["properties"]["summary"]
-        distance, duration = summary["distance"], summary["duration"]
-        if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0 for v in (distance, duration)):
-            raise ValueError()
-        if distance == 0:
-            raise ValueError()
-        steps = []
-        for seg in feature.get("properties", {}).get("segments", []):
-            for st in seg.get("steps", []):
-                instr = st.get("instruction")
-                if instr:
-                    steps.append({
-                        "instruction": str(instr),
-                        "distance_m": round(float(st.get("distance", 0.0)), 1),
-                        "duration_s": round(float(st.get("duration", 0.0)), 1),
-                        "type": str(st.get("type", "")),
-                    })
-    except (KeyError, IndexError, TypeError, ValueError):
-        raise RoutingError("ROUTING_UNAVAILABLE", "ORS trả tuyến không hợp lệ.", 502) from None
+        for step in segment.get("steps", []):
+            if not isinstance(step, dict):
+                raise ValueError()
+            if step.get("instruction"):
+                step_distance, step_duration = float(step.get("distance", 0)), float(step.get("duration", 0))
+                if not all(math.isfinite(value) and value >= 0 for value in (step_distance, step_duration)):
+                    raise ValueError()
+                steps.append({
+                    "instruction": str(step["instruction"]), "distance_m": round(step_distance, 1),
+                    "duration_s": round(step_duration, 1), "type": str(step.get("type", "")),
+                })
     # Return only allowlisted fields, never upstream metadata or request headers.
     return line, distance, duration, steps
 
@@ -485,26 +504,19 @@ def _collect_ai_warnings(snapshot_data: dict) -> list[str]:
 def _finalize_route_response(
     *,
     request: RouteRequest,
-    best_line: LineString,
-    best_dist: float,
-    best_dur: float,
-    steps: list[dict],
+    trips: list[_Trip],
+    settings: Any,
     current_snapshot: dict,
     engine: str,
     profile: str,
-    extra_warnings: list[str] | None = None,
 ) -> dict:
-    coordinates = list(best_line.coords)
-    offsets = [
-        abs(_GEOD.inv(*point.coordinates(), *snapped)[2])
-        for point, snapped in ((request.start, coordinates[0]), (request.end, coordinates[-1]))
-    ]
+    limit = _route_limit(settings)
+    routes = _rank_routes(trips, request, current_snapshot, limit, settings)
+    best = routes[0]
     vehicle = getattr(request, "vehicle", "car")
     lang = getattr(request, "lang", "vi")
     ai_warnings = _collect_ai_warnings(current_snapshot)
     warnings = []
-    if extra_warnings:
-        warnings.extend(extra_warnings)
     if engine != "ors":
         warnings.append(_vehicle_label(vehicle, lang))
     if request.source == "demo":
@@ -515,12 +527,12 @@ def _finalize_route_response(
     warnings.extend(ai_warnings)
     if lang == "en":
         warnings.extend([
-            "Lower-risk route based on available sensor data; real-world safety is not guaranteed.",
+            "Routes checked against known exclusion zones; real-world safety is not guaranteed.",
             "Exclusion zones model area around sensors, not exact full flood extent.",
         ])
     else:
         warnings.extend([
-            "Tuyến ít rủi ro hơn theo dữ liệu hiện có, không bảo đảm an toàn thực tế.",
+            "Các tuyến đã được kiểm tra với vùng cấm đã biết, không bảo đảm an toàn thực tế.",
             "Vùng cấm là mô phỏng quanh điểm đo, không phải toàn bộ phạm vi ngập.",
         ])
     if engine == "valhalla":
@@ -535,32 +547,124 @@ def _finalize_route_response(
         warnings.append("Khoảng cách/thời gian chỉ tính phần tuyến trên đường; đoạn nối từ điểm chọn chưa được xác minh có thể đi được.")
 
     return {
-        "route": {"type": "Feature", "geometry": mapping(best_line), "properties": {}},
-        "distance_m": best_dist,
-        "duration_s": best_dur,
+        "route": best["route"],
+        "distance_m": best["distance_m"],
+        "duration_s": best["duration_s"],
+        "routes": routes,
+        "recommended_route_id": best["id"],
+        "requested_route_count": limit,
+        "returned_route_count": len(routes),
+        "ranking_policy": "warning_exposure_m_then_near_eta_warning_clearance_then_duration_s_then_distance_m",
+        "ranking_parameters": {
+            "warning_proximity_limit_m": settings.route_warning_proximity_limit_m,
+            "warning_proximity_eta_tolerance_s": settings.route_warning_proximity_eta_tolerance_s,
+        },
         "calculated_at": datetime.now(timezone.utc),
         "data_generated_at": current_snapshot["generated_at"],
         "profile": profile,
         "engine": engine,
-        "snap_distances_m": {"start": offsets[0], "end": offsets[1]},
+        "snap_distances_m": best["snap_distances_m"],
         "source": request.source,
         "include_real": request.include_real,
         "warnings": warnings,
-        "steps": steps,
+        "steps": best["steps"],
     }
 
 
+def _route_limit(settings: Any) -> int:
+    return settings.ors_alternative_target_count if settings.ors_alternative_routes_enabled else 1
+
+
+def _snap_distances(request: RouteRequest, line: LineString) -> dict:
+    return {
+        "start": abs(_GEOD.inv(*request.start.coordinates(), *line.coords[0])[2]),
+        "end": abs(_GEOD.inv(*request.end.coordinates(), *line.coords[-1])[2]),
+    }
+
+
+def _linear_length_m(geometry) -> float:
+    if geometry.is_empty:
+        return 0.0
+    if geometry.geom_type == "LineString":
+        return _GEOD.geometry_length(geometry)
+    return sum(_linear_length_m(part) for part in getattr(geometry, "geoms", ()))
+
+
+def _rank_routes(trips: list[_Trip], request: RouteRequest, current: dict, limit: int, settings: Any) -> list[dict]:
+    warnings = [
+        (shape(feature["geometry"]), feature["properties"])
+        for feature in current.get("warning_zones", {}).get("features", [])
+    ]
+    metric_zones = []
+    for zone, _ in warnings:
+        center = zone.centroid
+        local = CRS.from_proj4(
+            f"+proj=aeqd +lat_0={center.y} +lon_0={center.x} +datum=WGS84 +units=m"
+        )
+        project = Transformer.from_crs("EPSG:4326", local, always_xy=True).transform
+        metric_zones.append((project, transform(zone, project, interleaved=False)))
+    ranked = []
+    for line, distance, duration, steps in trips:
+        hits = [(zone, props) for zone, props in warnings if line.intersects(zone)]
+        exposure = _linear_length_m(line.intersection(unary_union([zone for zone, _ in hits]))) if hits else 0
+        stations = [
+            {key: props[key] for key in ("station_id", "name", "source", "water_depth_cm")}
+            for _, props in hits
+        ]
+        clearance = 0.0 if hits else min(
+            (transform(line, project, interleaved=False).distance(zone) for project, zone in metric_zones),
+            default=None,
+        )
+        ranked.append((round(exposure, 1), duration, distance, line, steps, stations,
+                       None if clearance is None else round(clearance, 1)))
+    ranked.sort(key=lambda item: item[:3])
+    ordered = []
+    for _, exposure_group in groupby(ranked, key=lambda item: item[0]):
+        group = list(exposure_group)
+        start = 0
+        while start < len(group):
+            # Anchor each window to its fastest remaining route. Pairwise ETA tolerances are not transitive.
+            end = start + 1
+            while end < len(group) and group[end][1] - group[start][1] <= settings.route_warning_proximity_eta_tolerance_s:
+                end += 1
+            window = group[start:end]
+            window.sort(key=lambda item: -min(item[6] or 0.0, settings.route_warning_proximity_limit_m))
+            ordered.extend(window)
+            start = end
+    routes = []
+    seen = []
+    for exposure, duration, distance, line, steps, stations, clearance in ordered:
+        if any(line.equals(previous) for previous in seen):
+            continue
+        seen.append(line)
+        rank = len(routes) + 1
+        routes.append({
+            "id": f"route-{rank}", "rank": rank,
+            "route": {"type": "Feature", "geometry": mapping(line), "properties": {}},
+            "distance_m": distance, "duration_s": duration, "steps": steps,
+            "snap_distances_m": _snap_distances(request, line),
+            "assessment": {
+                "warning_zone_count": len(stations), "warning_exposure_m": round(exposure, 1),
+                "nearest_warning_zone_distance_m": clearance,
+                "warning_stations": stations,
+            },
+        })
+        if rank == limit:
+            break
+    return routes
+
+
 def _select_non_intersecting(
-    trips: list[tuple[LineString, float, float, list[dict]]],
+    trips: list[_Trip],
     start_pt: list[float],
     end_pt: list[float],
     zones,
-) -> list[tuple[float, float, LineString, list[dict]]]:
+) -> list[_Trip]:
     candidates = []
-    for line, dist, dur, steps in trips:
-        checked = LineString([start_pt, *line.coords, end_pt])
+    for trip in trips:
+        checked = LineString([start_pt, *trip[0].coords, end_pt])
         if zones.is_empty or not checked.intersects(zones):
-            candidates.append((dist, dur, line, steps))
+            candidates.append(trip)
     return candidates
 
 
@@ -590,14 +694,17 @@ async def async_query_osrm(points: list[list[float]], client: httpx.AsyncClient,
         return []
 
 
-def _verify_against_fresh_snapshot(request: RouteRequest, best_line: LineString, settings: Any, current: dict):
+def _finalize_fallback(request, settings, current, candidates, engine, profile):
     vehicle = getattr(request, "vehicle", "car")
     current_zones = zones_from(current, scale=_zone_scale(vehicle, settings))
     require_data(current, request, current_zones)
-    checked = LineString([request.start.coordinates(), *best_line.coords, request.end.coordinates()])
-    if not current_zones.is_empty and checked.intersects(current_zones):
+    checked = _select_non_intersecting(candidates, request.start.coordinates(), request.end.coordinates(), current_zones)
+    if not checked:
         raise RoutingError("NO_SUITABLE_ROUTE", "Tình hình ngập vừa cập nhật và giao với tuyến đã tìm. Vui lòng thử lại.")
-    return current
+    return _finalize_route_response(
+        request=request, trips=checked,
+        settings=settings, current_snapshot=current, engine=engine, profile=profile,
+    )
 
 
 def find_route_osrm(request: RouteRequest, settings, get_snapshot, client: httpx.Client) -> dict:
@@ -623,12 +730,8 @@ def find_route_osrm(request: RouteRequest, settings, get_snapshot, client: httpx
     if not candidates:
         raise RoutingError("NO_SUITABLE_ROUTE", "Không tìm được tuyến tránh vùng cấm phù hợp với tình hình ngập hiện tại.")
 
-    candidates.sort(key=lambda x: x[0])
-    best_dist, best_dur, best_line, steps = candidates[0]
-    current = _verify_against_fresh_snapshot(request, best_line, settings, get_snapshot())
-    return _finalize_route_response(
-        request=request, best_line=best_line, best_dist=best_dist, best_dur=best_dur, steps=steps,
-        current_snapshot=current, engine="osrm", profile="driving-car" if vehicle == "car" else vehicle,
+    return _finalize_fallback(
+        request, settings, get_snapshot(), candidates, "osrm", "driving-car" if vehicle == "car" else vehicle,
     )
 
 
@@ -655,12 +758,9 @@ async def async_find_route_osrm(request: RouteRequest, settings, get_snapshot, c
     if not candidates:
         raise RoutingError("NO_SUITABLE_ROUTE", "Không tìm được tuyến tránh vùng cấm phù hợp với tình hình ngập hiện tại.")
 
-    candidates.sort(key=lambda x: x[0])
-    best_dist, best_dur, best_line, steps = candidates[0]
-    current = _verify_against_fresh_snapshot(request, best_line, settings, await anyio.to_thread.run_sync(get_snapshot))
-    return _finalize_route_response(
-        request=request, best_line=best_line, best_dist=best_dist, best_dur=best_dur, steps=steps,
-        current_snapshot=current, engine="osrm", profile="driving-car" if vehicle == "car" else vehicle,
+    return _finalize_fallback(
+        request, settings, await anyio.to_thread.run_sync(get_snapshot), candidates, "osrm",
+        "driving-car" if vehicle == "car" else vehicle,
     )
 
 
@@ -704,12 +804,8 @@ def find_route_valhalla(request: RouteRequest, settings, get_snapshot, client: h
         logger.info("Valhalla found no valid detour, falling back to OSRM.")
         return find_route_osrm(request, settings, get_snapshot, client)
 
-    candidates.sort(key=lambda x: x[0])
-    best_dist, best_dur, best_line, steps = candidates[0]
-    current = _verify_against_fresh_snapshot(request, best_line, settings, get_snapshot())
-    return _finalize_route_response(
-        request=request, best_line=best_line, best_dist=best_dist, best_dur=best_dur, steps=steps,
-        current_snapshot=current, engine="valhalla", profile="driving-car" if vehicle == "car" else vehicle,
+    return _finalize_fallback(
+        request, settings, get_snapshot(), candidates, "valhalla", "driving-car" if vehicle == "car" else vehicle,
     )
 
 
@@ -753,12 +849,9 @@ async def async_find_route_valhalla(request: RouteRequest, settings, get_snapsho
         logger.info("Async Valhalla found no valid detour, falling back to OSRM.")
         return await async_find_route_osrm(request, settings, get_snapshot, client)
 
-    candidates.sort(key=lambda x: x[0])
-    best_dist, best_dur, best_line, steps = candidates[0]
-    current = _verify_against_fresh_snapshot(request, best_line, settings, await anyio.to_thread.run_sync(get_snapshot))
-    return _finalize_route_response(
-        request=request, best_line=best_line, best_dist=best_dist, best_dur=best_dur, steps=steps,
-        current_snapshot=current, engine="valhalla", profile="driving-car" if vehicle == "car" else vehicle,
+    return _finalize_fallback(
+        request, settings, await anyio.to_thread.run_sync(get_snapshot), candidates, "valhalla",
+        "driving-car" if vehicle == "car" else vehicle,
     )
 
 
@@ -774,21 +867,27 @@ def _ors_body_and_url(request: RouteRequest, settings: Any, zones) -> tuple[str,
     }
     if not zones.is_empty:
         body["options"] = {"avoid_polygons": mapping(zones)}
+    if settings.ors_alternative_routes_enabled and _route_limit(settings) > 1:
+        body["alternative_routes"] = {
+            "target_count": _route_limit(settings),
+            "weight_factor": settings.ors_alternative_weight_factor,
+            "share_factor": settings.ors_alternative_share_factor,
+        }
     return url, body
 
 
-def _validate_ors_result(request: RouteRequest, settings: Any, line: LineString, zones, current: dict, current_zones):
-    coordinates = list(line.coords)
-    offsets = [
-        abs(_GEOD.inv(*point.coordinates(), *snapped)[2])
-        for point, snapped in ((request.start, coordinates[0]), (request.end, coordinates[-1]))
+def _validate_ors_results(request, settings, trips, zones, current, current_zones) -> list[_Trip]:
+    require_data(current, request, current_zones)
+    snapped = [
+        trip for trip in trips
+        if all(offset <= settings.ors_max_snap_m for offset in _snap_distances(request, trip[0]).values())
     ]
-    if any(offset > settings.ors_max_snap_m for offset in offsets):
+    if not snapped:
         raise RoutingError("NO_SUITABLE_ROUTE", "Điểm trên đường cách điểm đã chọn quá xa.")
     # Check the short snapped connectors too, but do not represent them as drivable roads.
-    checked_line = LineString([request.start.coordinates(), *coordinates, request.end.coordinates()])
-    require_data(current, request, current_zones)
-    return not checked_line.intersects(zones) and not checked_line.intersects(current_zones)
+    return _select_non_intersecting(
+        snapped, request.start.coordinates(), request.end.coordinates(), zones.union(current_zones),
+    )
 
 
 def find_route(request: RouteRequest, settings, get_snapshot, client: httpx.Client) -> dict:
@@ -818,7 +917,7 @@ def find_route(request: RouteRequest, settings, get_snapshot, client: httpx.Clie
             raise RoutingError("ROUTING_UNAVAILABLE", "Không kết nối được dịch vụ định tuyến.") from None
 
         try:
-            line, distance, duration, steps = parse_route(response)
+            trips = parse_ors_routes(response)
         except RoutingError as exc:
             if exc.code == "ROUTING_UNAVAILABLE" and getattr(settings, "ors_fallback_to_valhalla", False):
                 return find_route_valhalla(request, settings, get_snapshot, client)
@@ -826,9 +925,10 @@ def find_route(request: RouteRequest, settings, get_snapshot, client: httpx.Clie
 
         current = get_snapshot()
         current_zones = zones_from(current, scale=scale)
-        if _validate_ors_result(request, settings, line, zones, current, current_zones):
+        valid = _validate_ors_results(request, settings, trips, zones, current, current_zones)
+        if valid:
             return _finalize_route_response(
-                request=request, best_line=line, best_dist=distance, best_dur=duration, steps=steps,
+                request=request, trips=valid, settings=settings,
                 current_snapshot=current, engine="ors", profile=ors_profile,
             )
         data = current
@@ -862,7 +962,7 @@ async def async_find_route(request: RouteRequest, settings, get_snapshot, client
             raise RoutingError("ROUTING_UNAVAILABLE", "Không kết nối được dịch vụ định tuyến.") from None
 
         try:
-            line, distance, duration, steps = parse_route(response)
+            trips = parse_ors_routes(response)
         except RoutingError as exc:
             if exc.code == "ROUTING_UNAVAILABLE" and getattr(settings, "ors_fallback_to_valhalla", False):
                 return await async_find_route_valhalla(request, settings, get_snapshot, client)
@@ -870,9 +970,10 @@ async def async_find_route(request: RouteRequest, settings, get_snapshot, client
 
         current = await anyio.to_thread.run_sync(get_snapshot)
         current_zones = zones_from(current, scale=scale)
-        if _validate_ors_result(request, settings, line, zones, current, current_zones):
+        valid = _validate_ors_results(request, settings, trips, zones, current, current_zones)
+        if valid:
             return _finalize_route_response(
-                request=request, best_line=line, best_dist=distance, best_dur=duration, steps=steps,
+                request=request, trips=valid, settings=settings,
                 current_snapshot=current, engine="ors", profile=ors_profile,
             )
         data = current

@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from sqlalchemy import delete, func, select, text
 
 from app.ai.predictor import predict_flood_risk
-from app.flood import circle, classify, snapshot
+from app.flood import circle, classify, snapshot, warning_zone
 from app.models import DemoPoint
 from app.routing import RoutingError
 from app.schemas import DemoPointCreate, DemoPointPatch, DemoPointResponse
@@ -35,6 +35,7 @@ def selected_snapshot(session, settings, source="real", include_real=False):
         data = snapshot(session, settings.data_stale_seconds) if include_real else {
             "generated_at": datetime.now(timezone.utc), "stations": [],
             "flood_zones": {"type": "FeatureCollection", "features": []},
+            "warning_zones": {"type": "FeatureCollection", "features": []},
         }
         for point in session.scalars(select(DemoPoint).where(DemoPoint.is_active).order_by(DemoPoint.id)):
             hazard = classify(point.water_depth_cm, point.warning_threshold_cm, point.danger_threshold_cm)
@@ -53,6 +54,8 @@ def selected_snapshot(session, settings, source="real", include_real=False):
                 "water_depth_cm": point.water_depth_cm,
                 "rise_rate_cm_min": rise_rate,
                 "hazard_state": hazard, "data_quality": "fresh",
+                "warning_threshold_cm": point.warning_threshold_cm, "danger_threshold_cm": point.danger_threshold_cm,
+                "exclusion_radius_m": point.exclusion_radius_m,
                 "ai_prediction": ai_info,
                 # No fabricated measurement timestamps: these are manually configured values.
                 "measured_at": None, "received_at": None, "updated_at": point.updated_at,
@@ -68,6 +71,8 @@ def selected_snapshot(session, settings, source="real", include_real=False):
                         "predicted_15m": ai_info["predicted_15m"] if ai_info else None,
                     },
                 })
+            elif hazard == "warning":
+                data["warning_zones"]["features"].append(warning_zone(point, "demo", point.water_depth_cm))
         data["routing_data_sufficient"] = all(
             station["data_quality"] == "fresh" for station in data["stations"]
         )

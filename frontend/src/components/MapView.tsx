@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react';
-import { CircleMarker, GeoJSON, MapContainer, Marker, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
+import { useEffect, useMemo, useRef } from 'react';
+import { CircleMarker, GeoJSON, MapContainer, Marker, Pane, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import { divIcon, type LatLngTuple, type Marker as LeafletMarker } from 'leaflet';
 import type { FeatureCollection } from 'geojson';
 import { MAP_CENTER, MAP_ZOOM, TILE_ATTRIBUTION, TILE_URL } from '../config';
@@ -25,6 +25,10 @@ interface Props {
   origin: LatLng | null;
   destination: LatLng | null;
   routePath: LatLngTuple[] | null;
+  routePaths?: { id: string; path: LatLngTuple[] }[];
+  selectedRouteId?: string;
+  onSelectRoute?: (id: string) => void;
+  warningZones?: FeatureCollection;
   routeOutdated: boolean;
   pickMode: PickMode;
   selectedId: string | null;
@@ -60,11 +64,14 @@ function FitStations({ stations }: { stations: Station[] }) {
 }
 
 export default function MapView(p: Props) {
+  const boundsPath = useMemo(() => p.routePaths?.length ? p.routePaths.flatMap(({ path }) => path) : p.routePath,
+    [p.routePaths, p.routePath]);
+  const activePath = p.routePaths?.find(({ id }) => id === p.selectedRouteId)?.path ?? p.routePath;
   return (
     <MapContainer center={MAP_CENTER} zoom={MAP_ZOOM} className={`map${p.pickMode ? ' picking' : ''}`}>
       <TileLayer url={TILE_URL} attribution={TILE_ATTRIBUTION} maxZoom={19} />
       <ClickPicker enabled={p.pickMode !== null} onPick={p.onPick} />
-      <FitRoute path={p.routePath} />
+      <FitRoute path={boundsPath} />
       <FitStations stations={p.stations} />
 
       {p.zones && (
@@ -88,16 +95,30 @@ export default function MapView(p: Props) {
         />
       )}
 
-      {p.routePath && (
-        <Polyline
-          positions={p.routePath}
-          pathOptions={
-            p.routeOutdated
-              ? { color: '#8a949e', weight: 6, opacity: 0.8, dashArray: '10 8' }
-              : { color: '#0b6b8a', weight: 6, opacity: 0.9 }
-          }
+      {!!p.warningZones?.features.length && (
+        <GeoJSON key={`warning-${p.zonesKey}`} data={p.warningZones}
+          style={{ color: '#936300', weight: 2, fillColor: '#e3b505', fillOpacity: 0.22, interactive: false }}
         />
       )}
+      {p.routePaths?.filter(({ id }) => id !== p.selectedRouteId).map(({ id, path }) => (
+        <Polyline key={id} positions={path} bubblingMouseEvents={false} interactive={!p.pickMode}
+          pathOptions={{ color: p.routeOutdated ? '#8a949e' : '#526c9c', weight: 5, opacity: 0.5, dashArray: '8 6' }}
+          eventHandlers={{ click: () => p.onSelectRoute?.(id) }}
+        />
+      ))}
+      <Pane name="selected-route" style={{ zIndex: 410, pointerEvents: 'none' }}>
+        {activePath && (
+          <Polyline
+            positions={activePath}
+            interactive={false}
+            pathOptions={
+              p.routeOutdated
+                ? { color: '#8a949e', weight: 6, opacity: 0.8, dashArray: '10 8' }
+                : { color: '#0b6b8a', weight: 6, opacity: 0.9 }
+            }
+          />
+        )}
+      </Pane>
 
       {p.stations.map((s) => {
         const lv = displayLevel(s);

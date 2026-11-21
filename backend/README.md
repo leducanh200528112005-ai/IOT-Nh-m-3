@@ -114,12 +114,18 @@ Thêm vào `backend/.env` (không đưa khóa thật lên Git):
 
 ```dotenv
 ORS_API_KEY=your_key_here
-ORS_BASE_URL=https://api.openrouteservice.org
+ORS_BASE_URL=https://api.heigit.org/openrouteservice
+ORS_ALTERNATIVE_ROUTES_ENABLED=true
+ORS_ALTERNATIVE_TARGET_COUNT=3
+ORS_ALTERNATIVE_WEIGHT_FACTOR=1.4
+ORS_ALTERNATIVE_SHARE_FACTOR=0.6
+ROUTE_WARNING_PROXIMITY_LIMIT_M=50
+ROUTE_WARNING_PROXIMITY_ETA_TOLERANCE_S=60
 ORS_TIMEOUT_SECONDS=15
 ORS_MAX_SNAP_M=50
 ```
 
-Khởi động lại backend sau khi sửa cấu hình. HTTPX là dependency runtime. Profile hiện cố định `driving-car`, không phải profile dành riêng cho xe máy.
+Khởi động lại backend sau khi sửa cấu hình. Nếu `.env` còn trỏ đến `api.openrouteservice.org`, đổi sang URL mới ở trên. ORS có thể trả ít tuyến hơn `TARGET_COUNT` (1–3); tắt `ENABLED` để chỉ trả một tuyến. `WEIGHT_FACTOR` giới hạn chi phí đi vòng theo ORS; `SHARE_FACTOR` giới hạn phần trùng với tuyến tối ưu của ORS. Hai giá trị này không phải điểm rủi ro ngập. Valhalla/OSRM cũng trả không quá số tuyến đã cấu hình, nhưng hai hệ số ORS không điều khiển cách các dịch vụ đó sinh ứng viên.
 
 ### Request
 
@@ -139,16 +145,29 @@ Tọa độ trên chỉ minh họa. Chọn hai điểm trên đường, ngoài v
 
 ### Response thành công
 
-- `route`: GeoJSON Feature có hình học LineString, `[longitude, latitude]`.
+- `routes[]`: danh sách xếp hạng, mỗi phần tử có `id`, `rank`, `route` (GeoJSON LineString theo `[longitude, latitude]`), khoảng cách, thời gian và `assessment`.
+- `assessment`: độ dài trong hợp các vùng `warning`, số vùng giao, thông tin trạm liên quan và `nearest_warning_zone_distance_m` (xem bên dưới). Chỉ vùng `danger`/`predicted_danger` (và vùng nguy hiểm được giữ lại) dùng để tránh cứng; vùng `warning` không gửi vào `avoid_polygons`.
+- `recommended_route_id`, `requested_route_count`, `returned_route_count`, `ranking_policy`, `ranking_parameters`: tuyến đề xuất, số tuyến mục tiêu/số thực trả, quy tắc và tham số xếp hạng.
+- `route` và các trường một tuyến cũ phản ánh tuyến đề xuất để giữ tương thích.
 - `distance_m`, `duration_s`: khoảng cách và thời gian phần tuyến trên đường.
 - `calculated_at`, `data_generated_at`: thời điểm tính và snapshot kiểm tra cuối.
-- `profile`: `driving-car`.
+- `profile`, `engine`: profile và dịch vụ định tuyến thực tế.
 - `snap_distances_m`: khoảng cách từ hai điểm chọn tới điểm đường ORS dùng.
 - `warnings`: các giới hạn cần hiển thị cho người dùng.
 
 Backend kiểm tra tuyến và đoạn nối tới hai điểm chọn không giao/chạm vùng cấm. Đoạn nối chỉ được kiểm tra hình học, không được xác nhận là đường đi được và không cộng vào distance/duration. Backend không chuyển tiếp metadata ORS hoặc khóa API.
 
-Trước khi trả kết quả, backend đọc lại trạng thái trạm. Nếu dữ liệu quá hạn thì từ chối; nếu vùng ngập mới cắt tuyến thì thử lại, tối đa hai lần gọi ORS. Lần hai thêm biên 20 m quanh vùng cấm hiện tại. Không tự giảm vùng cấm hay dùng tuyến mặc định khi thất bại.
+Trước khi trả kết quả, backend đọc lại trạng thái trạm và kiểm tra từng ứng viên. Nếu dữ liệu quá hạn thì từ chối; nếu mọi tuyến ORS hợp lệ về snap đều giao vùng cấm, thử thêm tối đa một lần với biên 20 m quanh vùng cấm hiện tại. Không trả tuyến chưa qua kiểm tra.
+
+### Xếp hạng theo khoảng cách đến vùng cảnh báo
+
+1. Ưu tiên tuyến có ít mét nằm **trong** vùng cảnh báo hơn (so đến 0,1 m; phần vùng chồng nhau không cộng trùng).
+2. Trong các tuyến cùng mức phơi nhiễm, nhóm các tuyến có thời gian chênh không quá `ROUTE_WARNING_PROXIMITY_ETA_TOLERANCE_S` (mặc định 60 giây) so với tuyến nhanh nhất còn lại. Xếp nhóm nhanh hơn trước. Trong từng nhóm, ưu tiên tuyến có khoảng cách gần nhất tới vùng cảnh báo **lớn hơn**.
+3. Khi xếp hạng, mọi khoảng cách từ `ROUTE_WARNING_PROXIMITY_LIMIT_M` trở lên được xem là ngang nhau (mặc định 50 m; đặt 0 để tắt tiêu chí khoảng cách). Nếu vẫn ngang nhau, ưu tiên thời gian ngắn hơn rồi quãng đường ngắn hơn.
+
+Ví dụ: hai tuyến không cắt vùng cảnh báo, chỗ gần nhất của A cách mép 5 m và của B cách 30 m. Nếu B chỉ chậm hơn 20 giây, B được ưu tiên theo cấu hình mặc định. Nếu B chậm hơn 90 giây, A đứng trước. Khoảng cách là khoảng cách ngắn nhất từ phần tuyến trên đường đến đa giác `warning`, không phải tới tâm trạm hay trung bình toàn tuyến. API trả số đo đến 0,1 m (0 nếu chạm/cắt vùng, `null` nếu không có vùng cảnh báo đã biết); giới hạn 50 m chỉ dùng để xếp hạng, không cắt số hiển thị.
+
+Vùng cảnh báo là vùng đệm cấu hình, không phải ranh giới ngập thực tế. Phép đo hai chiều chưa phân biệt cầu vượt, hầm và đường song song; chưa tự miễn đánh giá cho các đoạn này. Chỉ cân nhắc ngoại lệ theo đoạn đường sau khi xác minh được tuyến đi trên hay dưới, và không dùng ngoại lệ để bỏ vùng cấm. Không suy ra tuyến xa vùng cảnh báo hơn là an toàn hoặc phần ngoài vùng giám sát là khô.
 
 ### Lỗi
 
@@ -168,10 +187,11 @@ Không tự gọi API tìm đường theo polling. Hiện chưa có rate limit r
 ### Kiểm tra kết nối ORS thật
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\smoke_ors.py
+.\.venv\Scripts\python.exe -m scripts.smoke_ors
+.\.venv\Scripts\python.exe -m scripts.smoke_ors --with-avoid
 ```
 
-Script dùng tọa độ ví dụ công khai tại Heidelberg, gọi ORS một lần, không ghi DB hay thay đổi trạm. Nó chỉ kiểm tra key/kết nối/định dạng response, không chứng minh kịch bản tránh ngập tại Việt Nam. Các test tự động `tests/test_routing.py` dùng mock, không tiêu tốn quota.
+Script dùng tọa độ công khai tại Heidelberg và có thể thêm một vùng cấm giả lập để kiểm tra `alternative_routes` cùng `avoid_polygons`. Không ghi DB hay thay đổi trạm. Các test tự động `tests/test_routing.py` dùng mock, không tiêu tốn quota.
 
 ## 7. Điểm demo và kết hợp dữ liệu thật
 

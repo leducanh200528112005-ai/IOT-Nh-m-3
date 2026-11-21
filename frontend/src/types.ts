@@ -23,6 +23,9 @@ export interface Station {
   rise_rate_cm_min?: number;
   hazard_state: FloodLevel;
   data_quality: DataQuality;
+  exclusion_radius_m?: number;
+  warning_threshold_cm?: number;
+  danger_threshold_cm?: number;
   ai_prediction?: {
     depth_current: number;
     rate_cm_per_min: number;
@@ -44,6 +47,7 @@ export interface FloodZonesResponse {
   stations: Station[];
   /** GeoJSON: tọa độ theo thứ tự [lng, lat] */
   flood_zones: FeatureCollection;
+  warning_zones?: FeatureCollection;
   routing_data_sufficient: boolean;
 }
 
@@ -66,6 +70,22 @@ export interface RouteStep {
   type: string;
 }
 
+export interface RouteCandidate {
+  id: string;
+  rank: number;
+  route: Feature<LineString>;
+  distance_m: number;
+  duration_s: number;
+  snap_distances_m: { start: number; end: number };
+  steps: RouteStep[];
+  assessment: {
+    warning_zone_count: number;
+    warning_exposure_m: number;
+    nearest_warning_zone_distance_m?: number | null;
+    warning_stations: { station_id: string; name: string; source: 'real' | 'demo'; water_depth_cm: number }[];
+  };
+}
+
 export interface RouteResponse {
   source: 'real' | 'demo';
   include_real: boolean;
@@ -80,6 +100,15 @@ export interface RouteResponse {
   snap_distances_m: { start: number; end: number };
   warnings: string[];
   steps?: RouteStep[];
+  routes?: RouteCandidate[];
+  recommended_route_id?: string;
+  requested_route_count?: number;
+  returned_route_count?: number;
+  ranking_policy?: string;
+  ranking_parameters?: {
+    warning_proximity_limit_m: number;
+    warning_proximity_eta_tolerance_s: number;
+  };
 }
 
 export interface RouteHistoryItem {
